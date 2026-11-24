@@ -31,7 +31,7 @@ import androidx.compose.foundation.lazy.items
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun MediaViewer(entry: Entry, onClose: () -> Unit) {
+internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource.DataSource.Factory? = null, onClose: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("playback_positions", android.content.Context.MODE_PRIVATE) }
     var subtitle by remember(entry.uri) { mutableStateOf<Uri?>(null) }
@@ -75,7 +75,9 @@ internal fun MediaViewer(entry: Entry, onClose: () -> Unit) {
         }
         fun start() {
             if (active != null) return
-            val p = ExoPlayer.Builder(context).build()
+            val builder = ExoPlayer.Builder(context)
+            if (sourceFactory != null) builder.setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(sourceFactory))
+            val p = builder.build()
             active = p
             p.setAudioAttributes(AudioAttributes.DEFAULT, true)
             p.setHandleAudioBecomingNoisy(true)

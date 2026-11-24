@@ -39,3 +39,5 @@ SMB compilation CI 45428142635 passed. Added read-only SMB download to user-sele
 CI 45429056502 passed. Consolidated SMB connection lifecycle and authentication; download now verifies local destination size and SHA-256 by rereading it. No new dependencies or permissions. A destination without read access cannot be reported verified. New CI pending.
 
 CI 45430026684 passed. Added SMB upload from SAF OpenDocument using FILE_CREATE (no overwrite), bounded streaming, cancellation and remote SHA-256 verification. Partial remote files may remain on failure; no automatic destructive cleanup. New CI and server integration pending.
+
+CI 45430913449 passed. Added seekable SMB Media3 DataSource and reused MediaViewer for remote audio/video. No full-file download or new dependency. Runtime server, seek and codec tests pending; new CI pending.

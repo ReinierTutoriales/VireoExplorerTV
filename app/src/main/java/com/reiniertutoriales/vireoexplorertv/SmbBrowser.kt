@@ -28,7 +28,7 @@ import com.hierynomus.smbj.share.DiskShare
 import kotlinx.coroutines.*
 import java.util.concurrent.TimeUnit
 
-private class SmbEndpoint(val host: String, val share: String, val user: String, val domain: String, val password: CharArray)
+internal class SmbEndpoint(val host: String, val share: String, val user: String, val domain: String, val password: CharArray)
 private data class SmbEntry(val name: String, val directory: Boolean, val bytes: Long)
 
 private suspend fun <T> withSmbShare(endpoint: SmbEndpoint, operation: suspend (DiskShare) -> T): T = withContext(Dispatchers.IO) {
@@ -135,6 +135,7 @@ private suspend fun uploadSmb(endpoint: SmbEndpoint, folder: List<String>, resol
     check(verified == total && expected.contentEquals(digest.digest())) { "Remote verification failed" }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun SmbBrowser(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -148,6 +149,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     var pending by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     var transfer by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    var playback by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     val server = endpoint
     val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val request = pending
@@ -195,6 +197,16 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             finally { loading = false }
         }
     }
+    val media = playback
+    if (media != null && server != null) {
+        val uri = android.net.Uri.Builder().scheme("smb").authority(server.host).appendPath(server.share).appendPath(media.first).build()
+        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(media.second.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) ?: "video/*"
+        val factory = remember(server, media) { androidx.media3.datasource.DataSource.Factory {
+            androidx.media3.datasource.DefaultDataSource.Factory(context, androidx.media3.datasource.DataSource.Factory { SmbDataSource(server, media.first) }).createDataSource()
+        } }
+        MediaViewer(Entry(uri, media.second.name, mime, media.second.bytes, 0), factory, onClose = { playback = null })
+        return
+    }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("SMB 2/3 · browse and transfer")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -231,11 +243,15 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.name }) { entry ->
                 if (entry.directory) Button(enabled = transfer == null, onClick = { path = path + entry.name }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
-                else Button(enabled = transfer == null && pending == null && entry.bytes >= 0, onClick = {
+                else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(entry.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)).orEmpty()
+                    if (mime.startsWith("video/") || mime.startsWith("audio/")) Button(enabled = transfer == null, onClick = { playback = (path + entry.name).joinToString("\\") to entry }) { Text("Play") }
+                    Button(enabled = transfer == null && pending == null && entry.bytes >= 0, onClick = {
                     pending = (path + entry.name).joinToString("\\") to entry
                     try { destination.launch(entry.name) }
                     catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
-                }, modifier = Modifier.fillMaxWidth()) { Text("Download ${entry.name} · ${entry.bytes / 1024} KiB") }
+                }, modifier = Modifier.weight(1f)) { Text("Download ${entry.name} · ${entry.bytes / 1024} KiB") }
+                }
             }
         }
     }
