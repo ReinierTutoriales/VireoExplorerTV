@@ -4,4 +4,3 @@ The contributor skill `.agents/skills/no-ai-slop/` is an unmodified copy by Pete
 
 SMBJ 0.15.0 — Apache License 2.0, https://github.com/hierynomus/smbj . Distribution notices for resolved transitives must be reviewed before release.
 
-Apache Commons Compress 1.28.0 — Apache License 2.0. https://commons.apache.org/proper/commons-compress/ . Upstream license and notices must accompany distribution.

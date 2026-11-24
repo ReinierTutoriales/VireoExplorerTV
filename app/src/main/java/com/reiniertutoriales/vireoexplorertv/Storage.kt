@@ -33,44 +33,6 @@ class Storage(private val resolver: ContentResolver) {
             }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
         }
     }
-    suspend fun gzip(entry: Entry, parent: Uri, extract: Boolean, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
-        require(!entry.directory)
-        requireGrant(entry.uri)
-        requireGrant(parent, true)
-        revalidate(entry)
-        require(!extract || entry.name.endsWith(".gz", true))
-        val name = if (extract) entry.name.dropLast(3) else entry.name + ".gz"
-        require(validName(name))
-        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
-        val mime = if (extract) android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) ?: "application/octet-stream" else "application/gzip"
-        val target = checkNotNull(D.createDocument(resolver, parent, mime, name))
-        var total = 0L
-        val buffer = ByteArray(64 * 1024)
-        suspend fun copy(input: java.io.InputStream, output: java.io.OutputStream) {
-            while (true) {
-                coroutineContext.ensureActive()
-                val n = input.read(buffer)
-                if (n < 0) break
-                total += n
-                check(total <= 4L * 1024 * 1024 * 1024) { "GZIP size limit exceeded" }
-                output.write(buffer, 0, n)
-                progress(total)
-            }
-        }
-        try {
-            checkNotNull(resolver.openInputStream(entry.uri)).buffered().use { input ->
-                checkNotNull(resolver.openOutputStream(target, "w")).buffered().use { output ->
-                    if (extract) java.util.zip.GZIPInputStream(input).use { copy(it, output) }
-                    else java.util.zip.GZIPOutputStream(output).use { copy(input, it) }
-                }
-            }
-            check(extract || entry.size < 0 || total == entry.size) { "Source size changed" }
-            revalidate(entry)
-        } catch (e: Exception) {
-            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, target) } }
-            throw e
-        }
-    }
     suspend fun createZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
@@ -182,75 +144,6 @@ class Storage(private val resolver: ContentResolver) {
                     zip.closeEntry()
                 }
                 check(count > 0) { "Empty or invalid ZIP archive" }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { throw java.io.IOException("Extraction incomplete; completed files may remain: " + e.localizedMessage, e) }
-    }
-    suspend fun extractTar(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
-        requireGrant(entry.uri)
-        requireGrant(parent, true)
-        revalidate(entry)
-        val name = entry.name.dropLast(if (entry.name.endsWith(".tar.gz", true)) 7 else 4).ifBlank { "Extracted" }
-        require(validName(name))
-        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
-        val root = checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
-        val folders = mutableMapOf<List<String>, Uri>(emptyList<String>() to root)
-        val paths = HashSet<List<String>>()
-        var total = 0L
-        var count = 0
-        val buffer = ByteArray(64 * 1024)
-        suspend fun folder(parts: List<String>): Uri {
-            var current = root
-            for (i in parts.indices) {
-                coroutineContext.ensureActive()
-                val key = parts.take(i + 1)
-                current = folders[key] ?: run {
-                    check(folders.size < 10000) { "Too many directories" }
-                    check(children(current).none { it.name.equals(parts[i], true) }) { "Archive name conflict" }
-                    checkNotNull(D.createDocument(resolver, current, D.Document.MIME_TYPE_DIR, parts[i])).also { folders[key] = it }
-                }
-            }
-            return current
-        }
-        try {
-            checkNotNull(resolver.openInputStream(entry.uri)).buffered().use { raw ->
-                val source = if (entry.name.endsWith(".tar.gz", true) || entry.name.endsWith(".tgz", true)) java.util.zip.GZIPInputStream(raw) else raw
-                org.apache.commons.compress.archivers.tar.TarArchiveInputStream(source).use { zip ->
-                while (true) {
-                    coroutineContext.ensureActive()
-                    val item = zip.nextEntry ?: break
-                    check(item.isCheckSumOK && !item.isSymbolicLink && !item.isLink && !item.isSparse && (item.isDirectory || item.isFile)) { "Unsupported TAR entry" }
-                    check(++count <= 10000) { "Too many archive entries" }
-                    val parts = zipPath(item.name)
-                    check(paths.add(parts)) { "Duplicate archive path" }
-                    if (item.isDirectory) {
-                        folder(parts)
-                        check(zip.read() == -1) { "Invalid directory entry" }
-                    } else {
-                        val target = folder(parts.dropLast(1))
-                        check(children(target).none { it.name.equals(parts.last(), true) }) { "Archive name conflict" }
-                        val file = checkNotNull(D.createDocument(resolver, target, "application/octet-stream", parts.last()))
-                        try {
-                            checkNotNull(resolver.openOutputStream(file, "w")).use { output ->
-                                while (true) {
-                                    coroutineContext.ensureActive()
-                                    val n = zip.read(buffer)
-                                    if (n < 0) break
-                                    total += n
-                                    check(total <= 4L * 1024 * 1024 * 1024) { "Extraction size limit exceeded" }
-                                    output.write(buffer, 0, n)
-                                    progress(total)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, file) } }
-                            throw e
-                        }
-                    }
-
-                }
-                check(count > 0) { "Empty or invalid TAR archive" }
-                }
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { throw java.io.IOException("Extraction incomplete; completed files may remain: " + e.localizedMessage, e) }

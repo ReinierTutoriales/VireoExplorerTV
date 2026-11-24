@@ -97,3 +97,5 @@ CI 45456884843 passed. Native ZipOutputStream creation for selected file or fold
 CI 45457593482 passed. GZIP single-file compression/decompression via native GZIP streams, existing archive job/progress, SAF grants, collision check, 4 GiB uncompressed data limit, source metadata revalidation and best-effort incomplete output deletion. TAR.GZ currently extracts only the TAR stream. No new dependency or permission. New CI and provider integration tests pending.
 
 CI 45458693284 passed. Apache Commons Compress 1.28.0 selected from official release index https://commons.apache.org/ (checked 2026-11-24). TAR/TAR.GZ/TGZ extraction uses TarArchiveInputStream, native GZIP wrapper, rejects links/sparse/special entries and invalid header checksum. Existing bounds and SAF operations retained. New CI, Android runtime compatibility and archive integration tests pending.
+
+Scope correction: removed GZIP/TAR/TGZ code and UI, Commons Compress catalog/build dependency and active notice. ZIP remains. Multimedia and LAN are the primary roadmap. Earlier entries are historical, not current support. New CI pending.

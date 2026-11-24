@@ -210,23 +210,6 @@ class MainActivity : ComponentActivity() {
                                 .setPositiveButton("Create") { _, _ -> model.archive { progress -> storage.createZip(item, parent, progress) } }.show()
                         }) { Text("Create ZIP") }
                     }
-                    if (writable && parent != null && !item.directory) {
-                        val extract = item.name.endsWith(".gz", true)
-                        Button(enabled = !model.mutating, onClick = {
-                            AlertDialog.Builder(this@MainActivity).setTitle(if (extract) "Extract GZIP?" else "Create GZIP?")
-                                .setMessage("Create a new file without replacing the original.")
-                                .setNegativeButton("Cancel", null)
-                                .setPositiveButton("Continue") { _, _ -> model.archive { progress -> storage.gzip(item, parent, extract, progress) } }.show()
-                        }) { Text(if (extract) "Extract GZIP" else "Create GZIP") }
-                    }
-                    if (writable && parent != null && !item.directory && listOf(".tar", ".tar.gz", ".tgz").any { item.name.endsWith(it, true) }) {
-                        Button(enabled = !model.mutating, onClick = {
-                            AlertDialog.Builder(this@MainActivity).setTitle("Extract TAR?")
-                                .setMessage("Extract into a new folder. Completed files may remain on failure.")
-                                .setNegativeButton("Cancel", null)
-                                .setPositiveButton("Extract") { _, _ -> model.archive { progress -> storage.extractTar(item, parent, progress) } }.show()
-                        }) { Text("Extract TAR") }
-                    }
                     if (writable && parent != null && !item.directory && item.name.endsWith(".zip", true)) {
                         Button(enabled = !model.mutating, onClick = {
                             AlertDialog.Builder(this@MainActivity).setTitle("Extract ZIP?")
