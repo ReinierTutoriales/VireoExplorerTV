@@ -29,3 +29,5 @@ Added optional application storage statistics via StorageStatsManager on API 26+
 Cleanup CI 45423637442 succeeded. Statistics CI 45423885708 failed on ProtectedPermissions for PACKAGE_USAGE_STATS. Narrow manifest suppression for documented user-grantable usage access; no global lint suppression. Added explicit cleanup of reserved inactive analysis cache only (currently no producer, so normally zero bytes). Duplicate deletion and SMB pending. New CI pending.
 
 CI 45425614581 succeeded. Added individually confirmed duplicate deletion, distinct document identity checks, exact bounded streaming comparison, metadata revalidation and retained reference copy. Provider concurrency/aliasing cannot be made atomic by SAF; no bulk deletion. New CI pending. Network providers still pending.
+
+Duplicate CI 45426006634 succeeded. Added read-only network document-provider browsing through Android SAF, requiring an installed provider. No direct network protocol, new dependency or INTERNET permission. Direct SMB/NFS/SFTP/WebDAV and shared provider integration remain pending. New CI pending.

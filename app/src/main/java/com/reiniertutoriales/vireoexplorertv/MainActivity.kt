@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
         var transferred by remember { mutableLongStateOf(0L) }
         var search by remember { mutableStateOf("") }
         var scanOpen by remember { mutableStateOf(false) }
+        var networkOpen by remember { mutableStateOf(false) }
         var appsOpen by remember { mutableStateOf(false) }
         var mutating by remember { mutableStateOf(false) }
         fun mutate(action: suspend () -> Unit) {
@@ -82,6 +83,10 @@ class MainActivity : ComponentActivity() {
             StorageAnalysis(storage, parent, onClose = { scanOpen = false })
             return
         }
+        if (networkOpen) {
+            NetworkBrowser(onClose = { networkOpen = false })
+            return
+        }
         if (appsOpen) {
             AppManager(onClose = { appsOpen = false })
             return
@@ -105,7 +110,10 @@ class MainActivity : ComponentActivity() {
             Text(path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(enabled = !mutating, onClick = { try { picker.launch(null) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
-                if (parent == null) Button(enabled = !mutating, onClick = { appsOpen = true }) { Text("Apps & storage") }
+                if (parent == null) {
+                    Button(enabled = !mutating, onClick = { appsOpen = true }) { Text("Apps & storage") }
+                    Button(enabled = !mutating, onClick = { networkOpen = true }) { Text("Network") }
+                }
                 if(parent != null) {
                     Button(enabled = !mutating, onClick = { path = path.dropLast(1) }) { Text("Back") }
                     Button(enabled = !mutating, onClick = { revision++ }) { Text("Refresh") }
