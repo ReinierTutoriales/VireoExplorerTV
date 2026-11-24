@@ -29,6 +29,8 @@ class Storage(private val resolver: ContentResolver) {
         val queue = ArrayDeque<Pair<Uri, Int>>()
         val seen = HashSet<Uri>()
         val files = ArrayList<Entry>()
+        val emptyFolders = ArrayList<Entry>()
+        val folders = HashMap<Uri, Entry>()
         queue.add(root to 0)
         var limited = false
         var failures = 0
@@ -38,10 +40,11 @@ class Storage(private val resolver: ContentResolver) {
             if (!seen.add(folder)) continue
             if (seen.size > 2000 || files.size >= 20000) { limited = true; break }
             val entries = try { children(folder) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++; continue }
+            if (entries.isEmpty()) folders[folder]?.let { emptyFolders.add(it) }
             for (entry in entries) {
                 coroutineContext.ensureActive()
                 if (entry.directory) {
-                    if (depth < 32 && queue.size < 2000) queue.add(entry.uri to depth + 1) else limited = true
+                    if (depth < 32 && queue.size < 2000) { folders[entry.uri] = entry; queue.add(entry.uri to depth + 1) } else limited = true
                 } else if (files.size < 20000) files.add(entry) else limited = true
             }
         }
@@ -75,7 +78,19 @@ class Storage(private val resolver: ContentResolver) {
             }
             duplicates.addAll(hashes.values.filter { it.size > 1 })
         }
-        ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures)
+        ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures, (files.filter { cleanupReason(it.name) != null } + emptyFolders).distinctBy { it.uri })
+    }
+    suspend fun cleanCandidate(entry: Entry) = withContext(Dispatchers.IO) {
+        val columns = arrayOf(D.Document.COLUMN_DISPLAY_NAME, D.Document.COLUMN_SIZE, D.Document.COLUMN_FLAGS, D.Document.COLUMN_MIME_TYPE)
+        val current = checkNotNull(resolver.query(entry.uri, columns, null, null, null)).use { c ->
+            check(c.moveToFirst()) { "File unavailable" }
+            Entry(entry.uri, c.getString(0), c.getString(3), if (c.isNull(1)) -1 else c.getLong(1), c.getInt(2))
+        }
+        check(current.name == entry.name && current.size == entry.size && current.mime == entry.mime) { "File changed; scan again" }
+        if (current.directory) check(children(current.uri).isEmpty()) { "Folder is no longer empty" }
+        else check(cleanupReason(current.name) != null)
+        coroutineContext.ensureActive()
+        delete(current)
     }
     suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         require(!entry.directory && validName(entry.name))
@@ -143,4 +158,11 @@ class Storage(private val resolver: ContentResolver) {
 }
 fun validName(name: String) = name.isNotBlank() && name != "." && name != ".." && name.none { it == '/' || it == '\\' || it == '\u0000' }
 
-data class ScanResult(val count: Int, val bytes: Long, val largest: List<Entry>, val possibleDuplicates: List<List<Entry>>, val limited: Boolean, val failures: Int)
+data class ScanResult(val count: Int, val bytes: Long, val largest: List<Entry>, val possibleDuplicates: List<List<Entry>>, val limited: Boolean, val failures: Int, val candidates: List<Entry>)
+
+internal fun cleanupReason(name: String): String? = when (name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) {
+    "tmp", "temp" -> "Possible temporary file"
+    "part", "partial", "crdownload" -> "Possible incomplete download"
+    "apk" -> "APK installer"
+    else -> null
+}
