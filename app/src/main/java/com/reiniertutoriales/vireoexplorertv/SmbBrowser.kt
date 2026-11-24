@@ -227,12 +227,20 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     }
     val media = playback
     if (media != null && server != null) {
-        val uri = android.net.Uri.Builder().scheme("smb").authority(server.host).appendPath(server.share).appendPath(media.first).build()
+        fun remoteUri(remotePath: String) = android.net.Uri.Builder().scheme("smb").authority(server.host).appendPath(server.share).appendPath(remotePath).build()
+        val uri = remoteUri(media.first)
         val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(media.second.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) ?: "video/*"
-        val factory = remember(server, media) { androidx.media3.datasource.DataSource.Factory {
-            androidx.media3.datasource.DefaultDataSource.Factory(context, androidx.media3.datasource.DataSource.Factory { SmbDataSource(server, media.first) }).createDataSource()
-        } }
-        MediaViewer(Entry(uri, media.second.name, mime, media.second.bytes, 0), factory, onClose = { playback = null })
+        val remoteSidecars = remember(server, media, entries, path) {
+            entries.filter { !it.directory && matchesSubtitle(media.second.name, it.name) && validSmbName(it.name) }.take(16).map { item ->
+                val remotePath = (path + item.name).joinToString("\\")
+                Entry(remoteUri(remotePath), item.name, subtitleMimeForName(item.name)!!, item.bytes, 0) to remotePath
+            }
+        }
+        val factory = remember(server, media, remoteSidecars) {
+            val allowed = mapOf(uri to media.first) + remoteSidecars.associate { it.first.uri to it.second }
+            androidx.media3.datasource.DefaultDataSource.Factory(context, androidx.media3.datasource.DataSource.Factory { SmbDataSource(server, allowed) })
+        }
+        MediaViewer(Entry(uri, media.second.name, mime, media.second.bytes, 0), factory, sidecars = remoteSidecars.map { it.first }, onClose = { playback = null })
         return
     }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 import java.io.IOException
 
 @UnstableApi
-internal class SmbDataSource(private val endpoint: SmbEndpoint, private val path: String) : BaseDataSource(true) {
+internal class SmbDataSource(private val endpoint: SmbEndpoint, private val allowedPaths: Map<Uri, String>) : BaseDataSource(true) {
     private var client: SMBClient? = null
     private var share: DiskShare? = null
     private var file: File? = null
@@ -26,6 +26,7 @@ internal class SmbDataSource(private val endpoint: SmbEndpoint, private val path
     private var remaining = 0L
     private var started = false
     override fun open(dataSpec: DataSpec): Long {
+        val path = allowedPaths[dataSpec.uri] ?: throw IOException("SMB URI outside playback session")
         transferInitializing(dataSpec)
         val password = endpoint.password.copyOf()
         try {

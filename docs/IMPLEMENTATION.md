@@ -109,3 +109,5 @@ CI 45461762052 passed. Media3 native resize modes fit/zoom/stretch, playback spe
 CI 45462208452 passed. Native Media3 DefaultRenderersFactory decoder initialization fallback enabled; subtitle fractional text size S/M/L through SubtitleView; track information exposes MIME, codec string, dimensions, frame rate, channel count, sample rate, language and Media3 support/selection state. No new codecs bundled; no universal hardware support claim. New CI pending.
 
 CI 45463525178 passed. Local sidecar subtitles matched against current folder entries by exact stem or dot-delimited suffix, capped at 16, attached at initial MediaItem creation using Media3 SubtitleConfiguration. Manual subtitle selection retained alongside automatic tracks. Added filename matching unit test. SMB sidecars and runtime validation pending.
+
+CI 45464087752 passed. SMB Media3 data source now resolves each DataSpec URI against an explicit session allowlist of the media file and up to 16 matched sibling subtitle files. DefaultDataSource still routes local content URIs to platform sources. No arbitrary SMB path resolution or new dependency. New CI and real SMB integration tests pending.
