@@ -43,6 +43,8 @@ class MainActivity : ComponentActivity() {
         var clipboard by remember { mutableStateOf<Pair<Entry, Boolean>?>(null) }
         var transferJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
         var transferred by remember { mutableLongStateOf(0L) }
+        var search by remember { mutableStateOf("") }
+        var scanOpen by remember { mutableStateOf(false) }
         var mutating by remember { mutableStateOf(false) }
         fun mutate(action: suspend () -> Unit) {
             if (mutating) return
@@ -63,6 +65,7 @@ class MainActivity : ComponentActivity() {
         }
         val parent = path.lastOrNull()?.first
         LaunchedEffect(parent, revision) {
+            search = ""
             entries = emptyList()
             selected = null
             if (parent != null) {
@@ -73,6 +76,10 @@ class MainActivity : ComponentActivity() {
                 catch (e: Exception) { error = e.localizedMessage ?: "Cannot read folder" }
                 finally { busy = false }
             }
+        }
+        if (scanOpen && parent != null) {
+            StorageAnalysis(storage, parent, onClose = { scanOpen = false })
+            return
         }
         val video = viewing?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
         if (video != null) {
@@ -96,7 +103,15 @@ class MainActivity : ComponentActivity() {
                 if(parent != null) {
                     Button(enabled = !mutating, onClick = { path = path.dropLast(1) }) { Text("Back") }
                     Button(enabled = !mutating, onClick = { revision++ }) { Text("Refresh") }
+                    Button(enabled = !mutating && !busy, onClick = { scanOpen = true }) { Text("Analyze") }
+                    Button(enabled = !mutating, onClick = { searchDialog(search) { search = it } }) { Text("Search") }
                     Button(enabled = !mutating && !busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
+                }
+            }
+            if (search.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Search: $search")
+                    Button(onClick = { search = "" }) { Text("Clear search") }
                 }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -164,7 +179,7 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(entries, key = { it.uri.toString() }) { entry ->
+                    items(entries.filter { it.name.contains(search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
                         Button(enabled = !mutating, onClick = { if(entry.directory) path = path + (entry.uri to entry.name) else selected = entry }, modifier = Modifier.fillMaxWidth()) {
                             Text((if(entry.directory) "▸  " else "") + entry.name)
                         }
@@ -172,6 +187,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+    private fun searchDialog(initial: String, onConfirm: (String) -> Unit) {
+        val field = EditText(this).apply { setSingleLine(true); setText(initial) }
+        AlertDialog.Builder(this).setTitle("Search folder").setView(field)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Search") { _, _ -> onConfirm(field.text.toString().trim()) }.show()
     }
     private fun nameDialog(title: String, initial: String, onConfirm: (String) -> Unit) {
         val field = EditText(this).apply {

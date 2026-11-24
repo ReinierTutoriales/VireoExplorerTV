@@ -25,6 +25,58 @@ class Storage(private val resolver: ContentResolver) {
             }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
         }
     }
+    suspend fun scan(root: Uri): ScanResult = withContext(Dispatchers.IO) {
+        val queue = ArrayDeque<Pair<Uri, Int>>()
+        val seen = HashSet<Uri>()
+        val files = ArrayList<Entry>()
+        queue.add(root to 0)
+        var limited = false
+        var failures = 0
+        while (queue.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            val (folder, depth) = queue.removeFirst()
+            if (!seen.add(folder)) continue
+            if (seen.size > 2000 || files.size >= 20000) { limited = true; break }
+            val entries = try { children(folder) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++; continue }
+            for (entry in entries) {
+                coroutineContext.ensureActive()
+                if (entry.directory) {
+                    if (depth < 32 && queue.size < 2000) queue.add(entry.uri to depth + 1) else limited = true
+                } else if (files.size < 20000) files.add(entry) else limited = true
+            }
+        }
+        val duplicates = ArrayList<List<Entry>>()
+        val buffer = ByteArray(128 * 1024)
+        var budget = 512L * 1024 * 1024
+        for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }) {
+            if (group.size < 2) continue
+            val hashes = mutableMapOf<String, MutableList<Entry>>()
+            for (entry in group) {
+                coroutineContext.ensureActive()
+                if (size > budget) { limited = true; continue }
+                try {
+                    val md = MessageDigest.getInstance("SHA-256")
+                    var read = 0L
+                    checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            read += n
+                            budget -= n
+                            check(budget >= 0 && read <= size)
+                            md.update(buffer, 0, n)
+                        }
+                    }
+                    check(read == size)
+                    val hash = android.util.Base64.encodeToString(md.digest(), android.util.Base64.NO_WRAP)
+                    hashes.getOrPut(hash) { mutableListOf() }.add(entry)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+            }
+            duplicates.addAll(hashes.values.filter { it.size > 1 })
+        }
+        ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures)
+    }
     suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         require(!entry.directory && validName(entry.name))
         if (move) check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
@@ -90,3 +142,5 @@ class Storage(private val resolver: ContentResolver) {
     }
 }
 fun validName(name: String) = name.isNotBlank() && name != "." && name != ".." && name.none { it == '/' || it == '\\' || it == '\u0000' }
+
+data class ScanResult(val count: Int, val bytes: Long, val largest: List<Entry>, val possibleDuplicates: List<List<Entry>>, val limited: Boolean, val failures: Int)
