@@ -40,6 +40,7 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     var capacity by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var loading by remember { mutableStateOf(true) }
     var sizes by remember { mutableStateOf<Map<String, AppSize>>(emptyMap()) }
+    var lastUsed by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var measuring by remember { mutableStateOf(false) }
     var sort by rememberSaveable { mutableIntStateOf(0) }
     var statsJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -55,6 +56,7 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         statsJob?.cancel()
         sizes = emptyMap()
+        lastUsed = emptyMap()
         measuring = false
         revision++
     }
@@ -85,7 +87,7 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
             Button(onClick = { open(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }) { Text("System storage") }
             Button(onClick = { open(Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS)) }) { Text("Manage apps") }
             Button(onClick = { showSystem = !showSystem }) { Text(if (showSystem) "Hide system" else "Show system") }
-            Button(enabled = !measuring, onClick = { sizes = emptyMap(); revision++ }) { Text("Refresh") }
+            Button(enabled = !measuring, onClick = { sizes = emptyMap(); lastUsed = emptyMap(); revision++ }) { Text("Refresh") }
         }
         Button(onClick = { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Authorize usage statistics") }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -93,6 +95,7 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                 statsJob?.cancel()
                 measuring = true
                 sizes = emptyMap()
+                lastUsed = emptyMap()
                 val snapshot = apps
                 statsJob = scope.launch {
                     try {
@@ -108,11 +111,19 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                                 }
                             }
                         }
+                        lastUsed = withContext(Dispatchers.IO) {
+                            try {
+                                val manager = context.getSystemService(android.app.usage.UsageStatsManager::class.java)
+                                val now = System.currentTimeMillis()
+                                manager?.queryAndAggregateUsageStats(now - 30L * 24 * 60 * 60 * 1000, now)
+                                    .orEmpty().mapValues { it.value.lastTimeUsed }.filterValues { it > 0L }
+                            } catch (_: SecurityException) { emptyMap() }
+                        }
                         if (sizes.size < snapshot.size) error = "Some statistics unavailable; check usage access"
                     } finally { measuring = false }
                 }
             }) { Text("Measure applications") }
-            Button(onClick = { sort = (sort + 1) % 3 }) { Text(listOf("Name", "Largest", "Cache")[sort]) }
+            Button(onClick = { sort = (sort + 1) % 4 }) { Text(listOf("Name", "Largest", "Cache", "Recent use")[sort]) }
             if (measuring) Button(onClick = { statsJob?.cancel() }) { Text("Cancel") }
         }
 
@@ -144,12 +155,18 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                 when (sort) {
                     1 -> visible.sortedByDescending { sizes[it.pkg]?.total ?: -1L }
                     2 -> visible.sortedByDescending { sizes[it.pkg]?.cache ?: -1L }
+                    3 -> visible.sortedByDescending { lastUsed[it.pkg] ?: -1L }
                     else -> visible
                 }
             }, key = { it.pkg }) { app ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))) }, modifier = Modifier.weight(1f)) {
-                    Column { Text(app.name); Text(app.pkg) }
+                    Column {
+                        Text(app.name); Text(app.pkg)
+                        if (sort == 3) Text(lastUsed[app.pkg]?.let {
+                            "Last reported use: " + android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it))
+                        } ?: "No usage reported in last 30 days")
+                    }
                 }
                 sizes[app.pkg]?.let { size ->
                     Column {
