@@ -30,3 +30,6 @@ Independent work may be combined where safe; every slice must be functional. No 
 - https://docs.gradle.org/current/userguide/compatibility.html
 
 Reference entry points are not evidence that a specific version or feature was verified. Consult live upstream documentation before implementation.
+
+## Specification routing
+Architecture and roadmap define scope; ENGINES.md defines provider, network, cleaner and codec contracts; UI.md defines native TV design; PLAYER.md and IMAGE_VIEWER.md define viewers. IMPLEMENTATION.md is the evidence ledger. Apply relevant skills, verify dependency versions and licenses, resolve CI blockers, then deliver complete functional slices. Keep third-party no-ai-slop skill unchanged.

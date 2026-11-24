@@ -10,3 +10,6 @@ description: Research, audit and integrate documented upstream fixes and stable 
 - Search the local codebase for the same verified bug class rather than merely copying upstream.
 - For parsers and native boundaries if present, use bounded input validation, fuzzing and sanitizers where supported.
 - Record accepted, rejected and pending changes with reasons and actual validation.
+
+## Integrated project requirements
+Before adding codecs, protocol stacks or icons, verify upstream official stable release, Android compatibility, transitive dependencies, security, proprietary license and patent obligations, ABI/16 KiB requirements where relevant. Record source/version/date and use minimal necessary integration.

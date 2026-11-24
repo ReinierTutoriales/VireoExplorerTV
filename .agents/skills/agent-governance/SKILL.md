@@ -10,3 +10,6 @@ description: Repository governance, owner decisions, truthful verification and r
 - Work within authorized scope; ask before unrelated behavior changes. Latest stable updates are standing policy subject to compatibility and validation.
 - After remote jobs start, report SHA and available run link; do not claim pending checks passed.
 - After a verified failure, fix cause and regression coverage; update the relevant skill with one reusable lesson, replacing obsolete guidance.
+
+## Integrated project requirements
+Read AGENTS.md and the applicable specification index in docs/EXECUTION.md. Proprietary license is binding; preserve third-party rights, owner release/signing decisions and repository protections. Distinguish implementation from specification and verified results.

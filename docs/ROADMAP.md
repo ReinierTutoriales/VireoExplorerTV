@@ -10,4 +10,6 @@ Proprietary Android TV/Google TV only. Follow ARCHITECTURE.md, EXECUTION.md and 
 8. Archives: ZIP browse/create/extract, traversal and expansion limits; evaluate other formats by license and demand.
 9. Hardening: permissions, dependency licenses, security, R8, startup/frame/memory/throughput measurement, baseline profiles.
 10. Release: complete regression matrix, signed release only with owner approval, documentation and verified artifacts.
-Combine independent work where safe; never mark a phase complete without evidence. No device-specific assumptions. Latest compatible stable releases verified before adoption. API 36 provisional due to recorded SDK package failure; revisit when API 37 is available.
+Combine independent work where safe; never mark a phase complete without evidence. No device-specific assumptions. Latest compatible stable releases verified before adoption. Compile SDK 37.2 attempted to satisfy Compose metadata; target 36 and min 24 retained provisionally. Verify current CI and SDK availability before further dependency expansion.
+
+Detailed acceptance contracts: ENGINES.md, UI.md, PLAYER.md, IMAGE_VIEWER.md. Multimedia includes audio/video tracks, external and embedded subtitles, native image viewer, bounded memory and remote streaming. All features share provider capabilities and security policies.

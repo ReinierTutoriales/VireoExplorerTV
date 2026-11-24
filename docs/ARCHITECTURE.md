@@ -25,3 +25,6 @@ Track startup, frame timing, focus navigation, memory, idle CPU, APK size, throu
 
 ## Visual identity
 Pure AMOLED black (#000000) window and content background, near-black elevated surfaces, mint accent (#80DCC0), high-contrast text. Central AndroidX TV Material color scheme; native TV component focus and typography defaults. Verify focus contrast, D-pad navigation and startup on emulator before claiming visual acceptance. Do not introduce mobile Material widgets or custom focus systems without evidence.
+
+## Detailed contracts
+ENGINES.md, UI.md, PLAYER.md and IMAGE_VIEWER.md refine this architecture; EXECUTION.md and ROADMAP.md govern delivery. Preserve proprietary licensing and shared provider boundaries; do not treat candidate dependencies or target formats as implemented support.

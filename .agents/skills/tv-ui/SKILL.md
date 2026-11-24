@@ -15,3 +15,6 @@ Mandatory native Jetpack Compose for TV and AndroidX TV Material, latest compati
 
 ## Native UI performance contract
 Follow [UI specification](docs/UI.md) (repository-root path). Prefer official TV Material and Compose Foundation primitives, native focus and vector resources; no redundant UI stacks. Measure startup, frame timing, memory and focus regressions before claiming improvements.
+
+## Integrated project requirements
+Follow docs/UI.md and viewer specs. AMOLED tokens, official Material Symbols Rounded local vectors with provenance, native TV controls, stable lazy keys, deterministic focus/back, accessible labels, contextual actions and no eager decoding/scanning.

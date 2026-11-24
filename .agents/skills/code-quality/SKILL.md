@@ -9,3 +9,6 @@ description: Audit correctness, performance, security, accessibility and obsolet
 - Remove duplicate, obsolete and dead code only after checking callers, reflection, resources, manifests and tests.
 - Measure memory, startup, frame timing and latency when claiming improvement. Never trade correctness or visual quality for unmeasured gains.
 - Distinguish verified findings from hypotheses and document reproduction and affected paths.
+
+## Integrated project requirements
+Audit shared provider boundaries, lifecycle, bounded memory/IO, cancellation, native UI focus, decoder capability, permission scope, credentials and destructive operations. Remove dead code only after consumer checks. Reject redundant stacks and unmeasured performance claims.
