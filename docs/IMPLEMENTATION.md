@@ -105,3 +105,5 @@ CI 45459858303 passed after ZIP-only cleanup. Media3 player now exposes elapsed/
 CI 45460943253 passed. MediaViewer full-size PlayerView with bottom TV overlay, four-second auto-hide during video playback, D-pad key-up reveal and focus restoration, persistent audio controls. No new dependencies. New CI and actual focus/SurfaceView overlay validation pending.
 
 CI 45461762052 passed. Media3 native resize modes fit/zoom/stretch, playback speed 0.75–2x, media metadata title/artist listener, local and SMB shared player. No new dependencies. New CI and runtime validation pending. HDR and codec capability reporting not implemented in this batch.
+
+CI 45462208452 passed. Native Media3 DefaultRenderersFactory decoder initialization fallback enabled; subtitle fractional text size S/M/L through SubtitleView; track information exposes MIME, codec string, dimensions, frame rate, channel count, sample rate, language and Media3 support/selection state. No new codecs bundled; no universal hardware support claim. New CI pending.

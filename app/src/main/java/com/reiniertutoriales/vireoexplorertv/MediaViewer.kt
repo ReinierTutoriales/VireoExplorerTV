@@ -36,6 +36,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.common.Format
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -74,6 +76,9 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     var durationMs by remember(entry.uri) { mutableLongStateOf(C.TIME_UNSET) }
     var buffering by remember { mutableStateOf(false) }
     var metadata by remember(entry.uri) { mutableStateOf(MediaMetadata.EMPTY) }
+    var captionSize by remember(entry.uri) { mutableIntStateOf(1) }
+    val captionFractions = listOf(0.04f, 0.0533f, 0.07f)
+    var showInfo by remember(entry.uri) { mutableStateOf(false) }
     var aspect by remember(entry.uri) { mutableIntStateOf(0) }
     var speedIndex by remember(entry.uri) { mutableIntStateOf(1) }
     val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
@@ -119,7 +124,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         fun start() {
             if (active != null) return
-            val builder = ExoPlayer.Builder(context).setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000)
+            val builder = ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true)).setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000)
             if (sourceFactory != null) builder.setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(sourceFactory))
             val p = builder.build()
             active = p
@@ -149,8 +154,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     val controlsFocus = remember { FocusRequester() }
     val surfaceFocus = remember { FocusRequester() }
     val video = entry.mime.startsWith("video/") || tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
-    LaunchedEffect(playing, controlsVisible, interaction, trackType, video, error, buffering) {
-        if (video && playing && controlsVisible && trackType == C.TRACK_TYPE_UNKNOWN && error == null && !buffering) {
+    LaunchedEffect(playing, controlsVisible, interaction, trackType, video, error, buffering, showInfo) {
+        if (video && playing && controlsVisible && trackType == C.TRACK_TYPE_UNKNOWN && error == null && !buffering && !showInfo) {
             delay(4000)
             controlsVisible = false
         }
@@ -159,7 +164,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         if (controlsVisible && player != null) controlsFocus.requestFocus() else if (!controlsVisible) surfaceFocus.requestFocus()
     }
     BackHandler {
-        if (trackType != C.TRACK_TYPE_UNKNOWN) trackType = C.TRACK_TYPE_UNKNOWN
+        if (showInfo) showInfo = false
+        else if (trackType != C.TRACK_TYPE_UNKNOWN) trackType = C.TRACK_TYPE_UNKNOWN
         else if (video && !controlsVisible) controlsVisible = true
         else onClose()
     }
@@ -176,7 +182,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             useController = false
             isFocusable = false
             layoutParams = ViewGroup.LayoutParams(-1, -1)
-        } }, update = { it.player = player; it.keepScreenOn = playing; it.resizeMode = aspectModes[aspect] },
+        } }, update = { it.player = player; it.keepScreenOn = playing; it.resizeMode = aspectModes[aspect]; it.subtitleView?.setFractionalTextSize(captionFractions[captionSize]) },
             onRelease = { it.player = null; it.keepScreenOn = false },
             modifier = Modifier.fillMaxSize())
         if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
@@ -196,6 +202,15 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             Text(playbackTime(positionMs) + " / " + playbackTime(durationMs))
         }
         val p = player
+        if (showInfo) {
+            LazyColumn(Modifier.heightIn(max = 180.dp)) {
+                items(tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO || it.type == C.TRACK_TYPE_TEXT }) { group ->
+                    for (i in 0 until group.length) {
+                        Text((if (group.isTrackSelected(i)) "✓ " else "") + describeTrack(group.getTrackFormat(i)) + if (group.isTrackSupported(i)) "" else " (unsupported)")
+                    }
+                }
+            }
+        }
         if (trackType != C.TRACK_TYPE_UNKNOWN && p != null) {
             LazyColumn(Modifier.heightIn(max = 160.dp)) {
                 if (trackType == C.TRACK_TYPE_TEXT) item {
@@ -226,6 +241,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             Button(enabled = p != null, onClick = { speedIndex = (speedIndex + 1) % speeds.size }) { Text(speeds[speedIndex].toString() + "×") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }, onClick = { trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }, onClick = { trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
+            Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }, onClick = { captionSize = (captionSize + 1) % captionFractions.size }) { Text("CC " + listOf("S", "M", "L")[captionSize]) }
+            Button(onClick = { showInfo = !showInfo }) { Text("Info") }
             Button(enabled = p != null, onClick = { try { picker.launch(arrayOf("*/*")) } catch (e: Exception) { error = "Subtitle picker unavailable" } }) { Text("External") }
         }
         }
@@ -245,3 +262,13 @@ private fun playbackTime(ms: Long): String {
     return if (seconds >= 3600) String.format(java.util.Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
     else String.format(java.util.Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60)
 }
+
+internal fun describeTrack(format: Format): String = buildList {
+    add(format.sampleMimeType ?: "Unknown format")
+    format.codecs?.let { add(it) }
+    if (format.width > 0 && format.height > 0) add(format.width.toString() + "×" + format.height)
+    if (format.frameRate > 0) add(format.frameRate.toString() + " fps")
+    if (format.channelCount > 0) add(format.channelCount.toString() + " ch")
+    if (format.sampleRate > 0) add(format.sampleRate.toString() + " Hz")
+    format.language?.let { add(it) }
+}.joinToString(" · ")
