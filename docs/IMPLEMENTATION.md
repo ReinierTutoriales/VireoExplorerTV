@@ -113,3 +113,5 @@ CI 45463525178 passed. Local sidecar subtitles matched against current folder en
 CI 45464087752 passed. SMB Media3 data source now resolves each DataSpec URI against an explicit session allowlist of the media file and up to 16 matched sibling subtitle files. DefaultDataSource still routes local content URIs to platform sources. No arbitrary SMB path resolution or new dependency. New CI and real SMB integration tests pending.
 
 CI 45465265655 passed. Music presentation uses embedded Media3 artwork and metadata, sampled BitmapFactory decode on IO, 8 MiB encoded artwork acceptance cap and 1024-pixel sampled dimension target, AMOLED placeholder and large title/artist/album. No external artwork lookup or new dependencies. New CI and TV layout validation pending.
+
+CI 45466264115 passed. Shared media routing hints for generic MIME types in local/USB and SMB browser, preserving explicit media MIME. Unit tests cover generic MKV, FLAC, AVIF, reported audio MP4 and ZIP. Routing does not imply decoder support. New CI pending.

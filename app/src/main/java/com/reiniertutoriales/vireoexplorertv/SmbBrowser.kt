@@ -229,7 +229,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     if (media != null && server != null) {
         fun remoteUri(remotePath: String) = android.net.Uri.Builder().scheme("smb").authority(server.host).appendPath(server.share).appendPath(remotePath).build()
         val uri = remoteUri(media.first)
-        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(media.second.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) ?: "video/*"
+        val mime = mediaMime(media.second.name)
         val remoteSidecars = remember(server, media, entries, path) {
             entries.filter { !it.directory && matchesSubtitle(media.second.name, it.name) && validSmbName(it.name) }.take(16).map { item ->
                 val remotePath = (path + item.name).joinToString("\\")
@@ -341,7 +341,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (entry.directory) Button(enabled = transfer == null, onClick = { path = path + entry.name }, modifier = Modifier.weight(1f)) { Text(entry.name) }
                 else {
-                    val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(entry.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)).orEmpty()
+                    val mime = mediaMime(entry.name)
                     if (mime.startsWith("video/") || mime.startsWith("audio/")) Button(enabled = transfer == null, onClick = { playback = (path + entry.name).joinToString("\\") to entry }) { Text("Play") }
                     Button(enabled = transfer == null && pending == null && entry.bytes >= 0, onClick = {
                     pending = (path + entry.name).joinToString("\\") to entry

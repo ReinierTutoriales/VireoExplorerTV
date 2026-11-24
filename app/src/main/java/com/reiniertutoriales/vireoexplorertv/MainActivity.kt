@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
             AppManager(onClose = { model.appsOpen = false })
             return
         }
-        val video = model.viewing?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
+        val video = model.viewing?.let { it.copy(mime = mediaMime(it.name, it.mime)) }?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
         if (video != null) {
             MediaViewer(video, sidecars = model.entries, onClose = { model.viewing = null })
             return
@@ -188,7 +188,7 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(enabled = !model.mutating, onClick = {
                         if (item.directory) { model.path = model.path + (item.uri to item.name); model.selected = null }
-                        else if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) model.viewing = item
+                        else if (mediaMime(item.name, item.mime).let { it.startsWith("image/") || it.startsWith("video/") || it.startsWith("audio/") }) model.viewing = item
                         else try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         catch(e: Exception) { model.error = "No compatible viewer installed" }
                     }) { Text("Open") }
