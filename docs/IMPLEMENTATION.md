@@ -101,3 +101,5 @@ CI 45458693284 passed. Apache Commons Compress 1.28.0 selected from official rel
 Scope correction: removed GZIP/TAR/TGZ code and UI, Commons Compress catalog/build dependency and active notice. ZIP remains. Multimedia and LAN are the primary roadmap. Earlier entries are historical, not current support. New CI pending.
 
 CI 45459858303 passed after ZIP-only cleanup. Media3 player now exposes elapsed/duration progress, buffering state, explicit 10-second seek increments, seekability gating and horizontally scrollable TV controls. Applies to local and SMB playback. No new dependencies. New CI pending; runtime focus and streaming validation pending.
+
+CI 45460943253 passed. MediaViewer full-size PlayerView with bottom TV overlay, four-second auto-hide during video playback, D-pad key-up reveal and focus restoration, persistent audio controls. No new dependencies. New CI and actual focus/SurfaceView overlay validation pending.

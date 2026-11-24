@@ -10,6 +10,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.*
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -129,16 +134,46 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         onStopOrDispose { stop() }
     }
-    BackHandler { if (trackType != C.TRACK_TYPE_UNKNOWN) trackType = C.TRACK_TYPE_UNKNOWN else onClose() }
-    Column(Modifier.fillMaxSize().background(Color.Black).padding(16.dp)) {
-        Text(entry.name)
+    var controlsVisible by remember(entry.uri) { mutableStateOf(true) }
+    var interaction by remember { mutableIntStateOf(0) }
+    val controlsFocus = remember { FocusRequester() }
+    val surfaceFocus = remember { FocusRequester() }
+    val video = entry.mime.startsWith("video/") || tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+    LaunchedEffect(playing, controlsVisible, interaction, trackType, video, error, buffering) {
+        if (video && playing && controlsVisible && trackType == C.TRACK_TYPE_UNKNOWN && error == null && !buffering) {
+            delay(4000)
+            controlsVisible = false
+        }
+    }
+    LaunchedEffect(controlsVisible, player) {
+        if (controlsVisible && player != null) controlsFocus.requestFocus() else if (!controlsVisible) surfaceFocus.requestFocus()
+    }
+    BackHandler {
+        if (trackType != C.TRACK_TYPE_UNKNOWN) trackType = C.TRACK_TYPE_UNKNOWN
+        else if (video && !controlsVisible) controlsVisible = true
+        else onClose()
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event ->
+        if (!controlsVisible && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+            if (event.type == KeyEventType.KeyUp) { controlsVisible = true; interaction++ }
+            true
+        } else {
+            if (event.type == KeyEventType.KeyDown) interaction++
+            false
+        }
+    }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply {
             useController = false
             isFocusable = false
             layoutParams = ViewGroup.LayoutParams(-1, -1)
         } }, update = { it.player = player; it.keepScreenOn = playing },
             onRelease = { it.player = null; it.keepScreenOn = false },
-            modifier = Modifier.weight(1f).fillMaxWidth())
+            modifier = Modifier.fillMaxSize())
+        if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
+        if (controlsVisible || buffering || error != null) Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).padding(16.dp)
+        ) {
+        Text(entry.name)
         if (buffering) Text("Buffering…")
         error?.let { Text(it) }
         if (durationMs > 0) {
@@ -174,11 +209,12 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onClose) { Text("Back") }
             Button(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekBack() }) { Text("−10s") }
-            Button(enabled = p != null, onClick = { p?.let { if (it.isPlaying) it.pause() else it.play() } }) { Text(if (playing) "Pause" else "Play") }
+            Button(modifier = Modifier.focusRequester(controlsFocus), enabled = p != null, onClick = { p?.let { if (it.isPlaying) it.pause() else it.play() } }) { Text(if (playing) "Pause" else "Play") }
             Button(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekForward() }) { Text("+10s") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }, onClick = { trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }, onClick = { trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
             Button(enabled = p != null, onClick = { try { picker.launch(arrayOf("*/*")) } catch (e: Exception) { error = "Subtitle picker unavailable" } }) { Text("External") }
+        }
         }
     }
 }
