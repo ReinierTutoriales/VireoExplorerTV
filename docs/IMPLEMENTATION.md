@@ -33,3 +33,5 @@ CI 45425614581 succeeded. Added individually confirmed duplicate deletion, disti
 Duplicate CI 45426006634 succeeded. Added read-only network document-provider browsing through Android SAF, requiring an installed provider. No direct network protocol, new dependency or INTERNET permission. Direct SMB/NFS/SFTP/WebDAV and shared provider integration remain pending. New CI pending.
 
 SMBJ 0.15.0 verified against Maven Central and upstream examples on 2026-11-24. Direct authenticated SMB directory browsing, signing required, timeouts, transient credentials and INTERNET permission. No file streaming or write operations yet; Android runtime crypto compatibility and dependency notices pending validation. https://central.sonatype.com/artifact/com.hierynomus/smbj
+
+SMB compilation CI 45428142635 passed. Added read-only SMB download to user-selected SAF document with bounded buffer, size verification, cancellation and explicit partial-file warning. No automatic deletion of destination because provider ownership/overwrite cannot be assumed. New CI and real server validation pending.

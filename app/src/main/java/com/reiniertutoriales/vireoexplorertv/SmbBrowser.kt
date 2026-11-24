@@ -5,6 +5,13 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.text.InputType
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.hierynomus.msdtyp.AccessMask
+import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.mssmb2.SMB2CreateDisposition
+import com.hierynomus.mssmb2.SMB2CreateOptions
+import java.util.EnumSet
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -42,6 +49,40 @@ private suspend fun listSmb(endpoint: SmbEndpoint, path: String): List<SmbEntry>
     }
 }
 
+private suspend fun downloadSmb(endpoint: SmbEndpoint, path: String, expected: Long, resolver: android.content.ContentResolver, target: android.net.Uri) = withContext(Dispatchers.IO) {
+    val config = SmbConfig.builder().withTimeout(10, TimeUnit.SECONDS)
+        .withSoTimeout(10, TimeUnit.SECONDS).withSigningRequired(true).build()
+    val password = endpoint.password.copyOf()
+    try {
+        SMBClient(config).use { client ->
+            client.connect(endpoint.host).use { connection ->
+                val session = connection.authenticate(AuthenticationContext(endpoint.user, password, endpoint.domain))
+                (session.connectShare(endpoint.share) as DiskShare).use { share ->
+                    share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
+                        EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN,
+                        EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
+                        file.inputStream.use { input ->
+                            checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
+                                val buffer = ByteArray(128 * 1024)
+                                var total = 0L
+                                while (true) {
+                                    coroutineContext.ensureActive()
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    total += n
+                                    check(total <= expected) { "Remote file changed" }
+                                    output.write(buffer, 0, n)
+                                }
+                                check(total == expected) { "Incomplete transfer" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } finally { password.fill('\u0000') }
+}
+
 @Composable
 internal fun SmbBrowser(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -51,9 +92,30 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    var pending by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
+    var transfer by remember { mutableStateOf<Job?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
     val server = endpoint
+    val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val request = pending
+        pending = null
+        if (uri != null && request != null && server != null) {
+            transfer = scope.launch {
+                try {
+                    downloadSmb(server, request.first, request.second.bytes, context.contentResolver, uri)
+                    status = "Download completed"
+                } catch (e: CancellationException) {
+                    status = "Download cancelled; destination may contain partial data"
+                    throw e
+                } catch (_: Exception) {
+                    status = "Download failed; destination may contain partial data"
+                } finally { transfer = null }
+            }
+        }
+    }
     DisposableEffect(server) { onDispose { server?.password?.fill('\u0000') } }
-    fun back() { if (path.isNotEmpty()) path = path.dropLast(1) else onClose() }
+    fun back() { if (transfer != null) return; if (path.isNotEmpty()) path = path.dropLast(1) else onClose() }
     BackHandler { back() }
     LaunchedEffect(server, path, refresh) {
         entries = emptyList(); error = null
@@ -66,10 +128,10 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         }
     }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("SMB 2/3 · read-only")
+        Text("SMB 2/3 · browse and download")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { back() }) { Text("Back") }
-            Button(enabled = !loading, onClick = {
+            Button(enabled = !loading && transfer == null, onClick = {
                 val fields = listOf("Server host or IP", "Share name", "Username", "Domain (optional)", "Password").map { label ->
                     EditText(context).apply { hint = label; setSingleLine(true) }
                 }
@@ -88,15 +150,21 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         fields.last().text.clear()
                     }.show()
             }) { Text("Connect") }
-            Button(enabled = server != null && !loading, onClick = { refresh++ }) { Text("Refresh") }
+            Button(enabled = server != null && !loading && transfer == null, onClick = { refresh++ }) { Text("Refresh") }
         }
         Text(path.joinToString(" / ").ifEmpty { server?.share ?: "Enter server credentials" })
+        status?.let { Text(it) }
+        if (transfer != null) Button(onClick = { transfer?.cancel() }) { Text("Cancel download") }
         if (loading) Text("Connecting…")
         error?.let { Text(it) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.name }) { entry ->
-                if (entry.directory) Button(onClick = { path = path + entry.name }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
-                else Text("${entry.name} · ${entry.bytes / 1024} KiB")
+                if (entry.directory) Button(enabled = transfer == null, onClick = { path = path + entry.name }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
+                else Button(enabled = transfer == null && pending == null && entry.bytes >= 0, onClick = {
+                    pending = (path + entry.name).joinToString("\\") to entry
+                    try { destination.launch(entry.name) }
+                    catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Download ${entry.name} · ${entry.bytes / 1024} KiB") }
             }
         }
     }
