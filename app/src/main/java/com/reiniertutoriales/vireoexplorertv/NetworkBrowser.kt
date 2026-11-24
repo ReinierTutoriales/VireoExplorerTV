@@ -18,6 +18,8 @@ import kotlinx.coroutines.CancellationException
 
 @Composable
 internal fun NetworkBrowser(onClose: () -> Unit) {
+    var smb by remember { mutableStateOf(false) }
+    if (smb) { SmbBrowser { smb = false }; return }
     val context = LocalContext.current
     val storage = remember { Storage(context.contentResolver) }
     var path by remember { mutableStateOf<List<Pair<Uri,String>>>(emptyList()) }
@@ -50,8 +52,9 @@ internal fun NetworkBrowser(onClose: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { if (path.size > 1) path = path.dropLast(1) else onClose() }) { Text("Back") }
             Button(onClick = { try { picker.launch(null) } catch (_: Exception) { error = "System picker unavailable" } }) { Text("Select provider") }
+            Button(onClick = { smb = true }) { Text("SMB server") }
         }
-        Text("Requires an installed network document provider. Direct SMB and other protocols are not yet available.")
+        Text("Select a system provider or connect directly to SMB.")
         if (loading) Text("Reading…")
         error?.let { Text(it) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

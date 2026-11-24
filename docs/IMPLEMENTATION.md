@@ -31,3 +31,5 @@ Cleanup CI 45423637442 succeeded. Statistics CI 45423885708 failed on ProtectedP
 CI 45425614581 succeeded. Added individually confirmed duplicate deletion, distinct document identity checks, exact bounded streaming comparison, metadata revalidation and retained reference copy. Provider concurrency/aliasing cannot be made atomic by SAF; no bulk deletion. New CI pending. Network providers still pending.
 
 Duplicate CI 45426006634 succeeded. Added read-only network document-provider browsing through Android SAF, requiring an installed provider. No direct network protocol, new dependency or INTERNET permission. Direct SMB/NFS/SFTP/WebDAV and shared provider integration remain pending. New CI pending.
+
+SMBJ 0.15.0 verified against Maven Central and upstream examples on 2026-11-24. Direct authenticated SMB directory browsing, signing required, timeouts, transient credentials and INTERNET permission. No file streaming or write operations yet; Android runtime crypto compatibility and dependency notices pending validation. https://central.sonatype.com/artifact/com.hierynomus/smbj
