@@ -256,7 +256,7 @@ class Storage(private val resolver: ContentResolver) {
         return false
     }
     suspend fun moveDirectory(entry: Entry, sourceParent: Uri, destination: Uri): Uri = withContext(Dispatchers.IO) {
-        require(android.os.Build.VERSION.SDK_INT >= 24 && entry.directory)
+        require(entry.directory)
         requireGrant(entry.uri, true)
         requireGrant(sourceParent, true)
         requireGrant(destination, true)

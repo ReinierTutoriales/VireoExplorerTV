@@ -45,10 +45,12 @@
     <string name="explorer_clear_filter">Quitar: %1$s</string>
     <plurals name="explorer_copy_queue">
         <item quantity="one">Selección para copiar: %1$d archivo</item>
+        <item quantity="many">Selección para copiar: %1$d archivos</item>
         <item quantity="other">Selección para copiar: %1$d archivos</item>
     </plurals>
     <plurals name="explorer_move_queue">
         <item quantity="one">Selección para mover: %1$d archivo</item>
+        <item quantity="many">Selección para mover: %1$d archivos</item>
         <item quantity="other">Selección para mover: %1$d archivos</item>
     </plurals>
 </resources>

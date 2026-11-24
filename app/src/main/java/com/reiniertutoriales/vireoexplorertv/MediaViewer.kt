@@ -138,7 +138,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         var active: ExoPlayer? = null
         var position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
         fun stop() {
-            active?.let { position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L); prefs.edit().putLong(entry.uri.toString(), position).apply(); session?.release(); session = null; it.release() }
+            active?.let {
+                position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L)
+                saveBoundedResumePosition(prefs, entry.uri.toString(), position)
+                session?.release()
+                session = null
+                it.release()
+            }
             active = null
             player = null
             playing = false
@@ -371,4 +377,25 @@ internal fun matchesSubtitle(mediaName: String, subtitleName: String): Boolean {
     val caption = subtitleName.substringBeforeLast('.')
     return media.isNotBlank() && (caption.equals(media, ignoreCase = true) ||
         caption.startsWith(media + ".", ignoreCase = true))
+}
+
+internal fun trimResumePositions(entries: Map<String, Long>, updatedKey: String, updatedPosition: Long, maxEntries: Int = 200): Map<String, Long> {
+    val result = LinkedHashMap<String, Long>()
+    for ((k, v) in entries) {
+        if (k != updatedKey && v > 0L) result[k] = v
+    }
+    if (updatedPosition > 0L) result[updatedKey] = updatedPosition
+    while (result.size > maxEntries) {
+        val oldest = result.keys.firstOrNull() ?: break
+        result.remove(oldest)
+    }
+    return result
+}
+
+private fun saveBoundedResumePosition(prefs: android.content.SharedPreferences, uriKey: String, position: Long) {
+    val current = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+    val trimmed = trimResumePositions(current, uriKey, position, 200)
+    val editor = prefs.edit().clear()
+    for ((k, v) in trimmed) editor.putLong(k, v)
+    editor.apply()
 }

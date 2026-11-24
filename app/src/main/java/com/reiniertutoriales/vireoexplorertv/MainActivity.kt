@@ -1,45 +1,44 @@
 package com.reiniertutoriales.vireoexplorertv
 
-import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.provider.DocumentsContract
+import android.provider.Settings
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.pluralStringResource
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.CancellationException
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.*
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import android.app.AlertDialog
-import android.widget.EditText
-import android.text.InputType
+import androidx.tv.material3.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val model by lazy { ViewModelProvider(this)[ExplorerModel::class.java] }
@@ -73,6 +72,16 @@ class MainActivity : ComponentActivity() {
         var homeSearch by rememberSaveable { mutableStateOf("") }
         var usbOnly by rememberSaveable { mutableStateOf(false) }
         var folderPickerNotice by remember { mutableStateOf<String?>(null) }
+
+        var showHomeSearchDialog by remember { mutableStateOf(false) }
+        var showFolderSearchDialog by remember { mutableStateOf(false) }
+        var showNewFolderDialog by remember { mutableStateOf(false) }
+        var renameItemDialog by remember { mutableStateOf<Entry?>(null) }
+        var deleteItemDialog by remember { mutableStateOf<Entry?>(null) }
+        var createZipItemDialog by remember { mutableStateOf<Entry?>(null) }
+        var extractZipItemDialog by remember { mutableStateOf<Entry?>(null) }
+        var installApkConsentDialog by remember { mutableStateOf<Entry?>(null) }
+
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val uri = result.data?.data
             if (result.resultCode != android.app.Activity.RESULT_OK || uri == null) {
@@ -114,7 +123,7 @@ class MainActivity : ComponentActivity() {
             folderPickerNotice = null
             model.error = null
             try {
-                val intent = if (volume != null && android.os.Build.VERSION.SDK_INT >= 29) {
+                val intent = if (volume != null && Build.VERSION.SDK_INT >= 29) {
                     volume.volume.createOpenDocumentTreeIntent()
                 } else Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                 picker.launch(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
@@ -168,11 +177,30 @@ class MainActivity : ComponentActivity() {
         }
         val image = model.viewing
         if (image != null) {
-            ImageViewer(image, contentResolver, onClose = { model.viewing = null })
+            ImageViewer(image, contentResolver, siblings = model.entries, onClose = { model.viewing = null })
             return
         }
+
+        fun launchApkInstall(entry: Entry) {
+            if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+                installApkConsentDialog = entry
+                return
+            }
+            try {
+                val installIntent = Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(entry.uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(installIntent)
+            } catch (_: android.content.ActivityNotFoundException) {
+                model.error = "Package installer unavailable on this TV"
+            } catch (_: SecurityException) {
+                model.error = "APK installation permission denied"
+            }
+        }
+
         fun openEntry(entry: Entry) {
             val mime = mediaMime(entry.name, entry.mime)
+            val isApk = FileCategory.APK.matches(entry) && !entry.directory
             val internalViewer = mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/")
             if (parent != null && (entry.directory || internalViewer)) returnEntries[parent] = entry.uri
             model.selected = null
@@ -180,6 +208,7 @@ class MainActivity : ComponentActivity() {
             when {
                 entry.directory -> model.path = model.path + (entry.uri to entry.name)
                 internalViewer -> model.viewing = entry
+                isApk -> launchApkInstall(entry)
                 else -> try {
                     startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(entry.uri, entry.mime)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
@@ -203,6 +232,40 @@ class MainActivity : ComponentActivity() {
                 else -> page = destination
             }
         }
+
+        if (showHomeSearchDialog) {
+            TvInputDialog(
+                title = "Search folder",
+                label = stringResource(R.string.explorer_search),
+                initial = homeSearch,
+                confirmLabel = "Search",
+                onConfirm = { value ->
+                    navigate(ExplorerPage.FILES)
+                    homeSearch = value.trim()
+                },
+                onDismiss = { showHomeSearchDialog = false }
+            )
+        }
+
+        val apkCandidate = installApkConsentDialog
+        if (apkCandidate != null) {
+            TvConfirmDialog(
+                title = "Allow APK installation?",
+                message = "To install ${apkCandidate.name}, authorize VireoExplorerTV in Android unknown app sources settings.",
+                confirmLabel = "Open settings",
+                onConfirm = {
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        try {
+                            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+                        } catch (_: Exception) {
+                            model.error = "Unknown app sources settings unavailable on this TV"
+                        }
+                    }
+                },
+                onDismiss = { installApkConsentDialog = null }
+            )
+        }
+
         if (parent == null) {
             BackHandler(page != ExplorerPage.HOME && !model.mutating) { navigate(ExplorerPage.HOME) }
             val usbUnavailable = stringResource(R.string.explorer_usb_unavailable)
@@ -217,12 +280,7 @@ class MainActivity : ComponentActivity() {
                 page = page,
                 notice = model.error ?: folderPickerNotice,
                 onPage = ::navigate,
-                onSearch = {
-                    searchDialog(homeSearch) { value ->
-                        navigate(ExplorerPage.FILES)
-                        homeSearch = value
-                    }
-                },
+                onSearch = { showHomeSearchDialog = true },
                 onInternal = {
                     val root = model.roots.firstOrNull { uri ->
                         uri.authority == "com.android.externalstorage.documents" &&
@@ -361,6 +419,75 @@ class MainActivity : ComponentActivity() {
                 (entry.directory || entry.name.contains(homeSearch, ignoreCase = true)) &&
                 entry.name.contains(model.search, ignoreCase = true)
 
+        if (showFolderSearchDialog) {
+            TvInputDialog(
+                title = "Search folder",
+                label = stringResource(R.string.explorer_search),
+                initial = model.search,
+                confirmLabel = "Search",
+                onConfirm = { model.search = it.trim() },
+                onDismiss = { showFolderSearchDialog = false }
+            )
+        }
+
+        if (showNewFolderDialog) {
+            TvInputDialog(
+                title = "New folder",
+                label = "Folder name",
+                initial = "",
+                confirmLabel = "OK",
+                validate = { if (!validName(it)) "Invalid name" else null },
+                onConfirm = { name -> model.mutate { storage.create(parent, name) } },
+                onDismiss = { showNewFolderDialog = false }
+            )
+        }
+
+        val renaming = renameItemDialog
+        if (renaming != null) {
+            TvInputDialog(
+                title = "Rename",
+                label = "New name",
+                initial = renaming.name,
+                confirmLabel = "OK",
+                validate = { if (!validName(it)) "Invalid name" else null },
+                onConfirm = { name -> model.mutate { storage.rename(renaming, name) } },
+                onDismiss = { renameItemDialog = null }
+            )
+        }
+
+        val deleting = deleteItemDialog
+        if (deleting != null) {
+            TvConfirmDialog(
+                title = if (deleting.directory) "Delete empty folder?" else "Delete file?",
+                message = deleting.name,
+                confirmLabel = "Delete",
+                onConfirm = { model.mutate { storage.delete(deleting) } },
+                onDismiss = { deleteItemDialog = null }
+            )
+        }
+
+        val creatingZip = createZipItemDialog
+        if (creatingZip != null) {
+            TvConfirmDialog(
+                title = "Create ZIP?",
+                message = creatingZip.name + ".zip",
+                confirmLabel = "Create",
+                onConfirm = { model.archive { progress -> storage.createZip(creatingZip, parent, progress) } },
+                onDismiss = { createZipItemDialog = null }
+            )
+        }
+
+        val extractingZip = extractZipItemDialog
+        if (extractingZip != null) {
+            TvConfirmDialog(
+                title = "Extract ZIP?",
+                message = "Extract into a new folder. Completed files may remain if extraction fails.",
+                confirmLabel = "Extract",
+                onConfirm = { model.archive { progress -> storage.extractZip(extractingZip, parent, progress) } },
+                onDismiss = { extractZipItemDialog = null }
+            )
+        }
+
         val primaryFocus = remember { FocusRequester() }
         var folderActions by remember(parent) { mutableStateOf(false) }
         val actionsOpen = model.selected != null
@@ -400,7 +527,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     IconButton(enabled = !model.mutating,
-                        onClick = { searchDialog(model.search) { model.search = it } }) {
+                        onClick = { showFolderSearchDialog = true }) {
                         ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
                     }
                     OutlinedButton(enabled = !model.mutating, onClick = { folderActions = !folderActions }) {
@@ -431,7 +558,7 @@ class MainActivity : ComponentActivity() {
                         primaryFocus.requestFocus()
                     }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
                     Button(enabled = writable && !model.mutating && !model.busy,
-                        onClick = { nameDialog("New folder", "") { name -> model.mutate { storage.create(parent, name) } } }) {
+                        onClick = { showNewFolderDialog = true }) {
                         Text("New folder")
                     }
                 }
@@ -499,33 +626,20 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(modifier = Modifier.focusRequester(primaryFocus),
                         enabled = !model.mutating, onClick = ::backFromFolder) { Text("Back to files") }
-                    Button(enabled = !model.mutating, onClick = { openEntry(item) }) { Text("Open") }
+                    Button(enabled = !model.mutating, onClick = { openEntry(item) }) {
+                        Text(if (!item.directory && FileCategory.APK.matches(item)) "Install APK" else "Open")
+                    }
                     if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
-                        Button(enabled = !model.mutating, onClick = { nameDialog("Rename", item.name) { name -> model.mutate { storage.rename(item, name) } } }) { Text("Rename") }
+                        Button(enabled = !model.mutating, onClick = { renameItemDialog = item }) { Text("Rename") }
                     }
                     if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !model.mutating, onClick = {
-                            AlertDialog.Builder(this@MainActivity).setTitle(if (item.directory) "Delete empty folder?" else "Delete file?")
-                                .setMessage(item.name).setNegativeButton("Cancel", null)
-                                .setPositiveButton("Delete") { _, _ -> model.mutate { storage.delete(item) } }
-                                .show().getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus()
-                        }) { Text("Delete") }
+                        Button(enabled = !model.mutating, onClick = { deleteItemDialog = item }) { Text("Delete") }
                     }
                     if (writable) {
-                        Button(enabled = !model.mutating, onClick = {
-                            AlertDialog.Builder(this@MainActivity).setTitle("Create ZIP?")
-                                .setMessage(item.name + ".zip")
-                                .setNegativeButton("Cancel", null)
-                                .setPositiveButton("Create") { _, _ -> model.archive { progress -> storage.createZip(item, parent, progress) } }.show()
-                        }) { Text("Create ZIP") }
+                        Button(enabled = !model.mutating, onClick = { createZipItemDialog = item }) { Text("Create ZIP") }
                     }
                     if (writable && !item.directory && item.name.endsWith(".zip", true)) {
-                        Button(enabled = !model.mutating, onClick = {
-                            AlertDialog.Builder(this@MainActivity).setTitle("Extract ZIP?")
-                                .setMessage("Extract into a new folder. Completed files may remain if extraction fails.")
-                                .setNegativeButton("Cancel", null)
-                                .setPositiveButton("Extract") { _, _ -> model.archive { progress -> storage.extractZip(item, parent, progress) } }.show()
-                        }) { Text("Extract ZIP") }
+                        Button(enabled = !model.mutating, onClick = { extractZipItemDialog = item }) { Text("Extract ZIP") }
                     }
                     Button(enabled = !model.mutating, onClick = { model.clipboard = listOf(item) to false; model.selected = null }) { Text("Copy") }
                     if (writable && (if (item.directory) item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0)) {
@@ -596,42 +710,18 @@ class MainActivity : ComponentActivity() {
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(visible, key = { it.uri.toString() }) { renderEntry(it) }
+                        items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
                     }
                 } else {
                     LazyColumn(
                         Modifier.weight(1f).focusRestorer(), state = listState, contentPadding = padding,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(visible, key = { it.uri.toString() }) { renderEntry(it) }
+                        items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
                     }
                 }
             }
         }
-    }
-    private fun searchDialog(initial: String, onConfirm: (String) -> Unit) {
-        val field = EditText(this).apply { setSingleLine(true); setText(initial) }
-        AlertDialog.Builder(this).setTitle("Search folder").setView(field)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Search") { _, _ -> onConfirm(field.text.toString().trim()) }.show()
-    }
-    private fun nameDialog(title: String, initial: String, onConfirm: (String) -> Unit) {
-        val field = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT
-            setSingleLine(true)
-            setText(initial)
-            selectAll()
-        }
-        val dialog = AlertDialog.Builder(this).setTitle(title).setView(field)
-            .setNegativeButton("Cancel", null).setPositiveButton("OK", null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val name = field.text.toString()
-                if (!validName(name)) field.error = "Invalid name"
-                else { dialog.dismiss(); onConfirm(name) }
-            }
-        }
-        dialog.show()
     }
 }
 
