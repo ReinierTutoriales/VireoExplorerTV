@@ -32,6 +32,14 @@ private val thumbnailCache: LruCache<String, Bitmap> by lazy {
 
 internal fun thumbnailCacheKey(entry: Entry, revision: Int): String = "${entry.uri}:${entry.size}:$revision"
 
+internal fun trimThumbnailCache(level: Int) {
+    if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
+        thumbnailCache.evictAll()
+    } else if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+        thumbnailCache.trimToSize(thumbnailCache.maxSize() / 2)
+    }
+}
+
 @Composable
 internal fun FileThumbnail(entry: Entry, revision: Int) {
     if (Build.VERSION.SDK_INT < 29 || entry.directory ||

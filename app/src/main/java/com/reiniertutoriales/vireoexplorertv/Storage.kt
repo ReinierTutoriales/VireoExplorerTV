@@ -87,7 +87,8 @@ class Storage(private val resolver: ContentResolver) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
         revalidate(entry)
-        val name = entry.name.dropLast(4).ifBlank { "Extracted" }
+        val rawStem = if (entry.name.endsWith(".zip", ignoreCase = true)) entry.name.dropLast(4) else entry.name
+        val name = rawStem.ifBlank { "Extracted" }
         require(validName(name))
         check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
         val root = checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
@@ -173,21 +174,22 @@ class Storage(private val resolver: ContentResolver) {
         }
         val duplicates = ArrayList<List<Entry>>()
         val buffer = ByteArray(128 * 1024)
+        var sampleBudget = 64L * 1024 * 1024
         var budget = 512L * 1024 * 1024
         for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }) {
             if (group.size < 2) continue
-            // Stage 1: progressive 64 KiB prefix sample hash for files larger than 128 KiB to avoid exhausting hash budget on distinct large files.
+            // Stage 1: progressive 64 KiB prefix sample hash for files larger than 128 KiB using a dedicated sample budget.
             val candidateGroups = if (size > 128 * 1024L) {
                 val sampleGroups = mutableMapOf<String, MutableList<Entry>>()
                 val sampleSize = 64 * 1024
                 for (entry in group) {
                     coroutineContext.ensureActive()
-                    if (sampleSize > budget) { limited = true; continue }
+                    if (sampleSize > sampleBudget) { limited = true; continue }
                     try {
-                        val prefixHash = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                        val (prefixHash, sampledBytes) = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
                             sampledPrefixSha256(input, sampleSize) { coroutineContext.ensureActive() }
                         }
-                        budget -= sampleSize
+                        sampleBudget -= sampledBytes
                         sampleGroups.getOrPut(prefixHash) { mutableListOf() }.add(entry)
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
                 }
@@ -216,7 +218,7 @@ class Storage(private val resolver: ContentResolver) {
                             }
                         }
                         check(read == size)
-                        val hash = android.util.Base64.encodeToString(md.digest(), android.util.Base64.NO_WRAP)
+                        val hash = bytesToHex(md.digest())
                         hashes.getOrPut(hash) { mutableListOf() }.add(entry)
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
                 }
@@ -295,7 +297,7 @@ class Storage(private val resolver: ContentResolver) {
         checkNotNull(D.moveDocument(resolver, entry.uri, sourceParent, destination)) { "Provider move failed" }
     }
     suspend fun copyDirectory(entry: Entry, parent: Uri, destinationName: String = entry.name, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
-        require(entry.directory && validName(entry.name))
+        require(entry.directory && validName(entry.name) && validName(destinationName))
         requireGrant(entry.uri)
         requireGrant(parent, true)
         // Reject same-provider destination aliases and descendants before creating anything.
@@ -423,19 +425,33 @@ internal fun cleanupReason(name: String): String? = when (name.substringAfterLas
     else -> null
 }
 
-internal inline fun sampledPrefixSha256(input: java.io.InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): String {
+private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+internal fun bytesToHex(bytes: ByteArray): String {
+    val out = CharArray(bytes.size * 2)
+    for (i in bytes.indices) {
+        val v = bytes[i].toInt() and 0xFF
+        out[i * 2] = HEX_CHARS[v ushr 4]
+        out[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+    }
+    return String(out)
+}
+
+internal inline fun sampledPrefixSha256(input: java.io.InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): Pair<String, Int> {
     require(maxBytes > 0)
     val md = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(minOf(maxBytes, 16 * 1024))
     var remaining = maxBytes
+    var totalRead = 0
     while (remaining > 0) {
         checkCancellation()
         val n = input.read(buffer, 0, minOf(buffer.size, remaining))
         if (n <= 0) break
         md.update(buffer, 0, n)
         remaining -= n
+        totalRead += n
     }
-    return md.digest().joinToString("") { "%02x".format(it) }
+    return bytesToHex(md.digest()) to totalRead
 }
 
 internal inline fun equalStreams(a: java.io.InputStream, b: java.io.InputStream, expected: Long, checkCancellation: () -> Unit): Boolean {

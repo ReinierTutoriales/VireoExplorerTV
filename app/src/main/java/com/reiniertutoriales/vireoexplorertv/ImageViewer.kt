@@ -6,18 +6,22 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.widget.ImageView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -30,6 +34,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.tv.material3.Button
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import kotlinx.coroutines.CancellationException
@@ -81,6 +86,12 @@ internal fun readBoundedImageBytes(input: InputStream, maxBytes: Int = MAX_IMAGE
     return output.toByteArray()
 }
 
+internal fun clampPanOffset(offset: Float, delta: Float, viewportPx: Int, zoom: Float): Float {
+    if (zoom <= 1f || viewportPx <= 0) return 0f
+    val maxOffset = (viewportPx * (zoom - 1f) / 2f).coerceAtLeast(0f)
+    return (offset + delta).coerceIn(-maxOffset, maxOffset)
+}
+
 private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
     val (degrees, flipHorizontal) = exifTransformDegreesAndFlip(orientation)
     if (degrees == 0f && !flipHorizontal) return bitmap
@@ -120,9 +131,11 @@ private fun decodeSourceVisual(source: ImageDecoder.Source, width: Int, height: 
         val scale = minOf(1.0, width.toDouble() / w, height.toDouble() / h)
         decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
     }
-    val drawable = ImageDecoder.decodeDrawable(source, listener)
-    return if (drawable is AnimatedImageDrawable) DecodedVisual.Animated(drawable)
-    else DecodedVisual.Static(ImageDecoder.decodeBitmap(source, listener))
+    return when (val drawable = ImageDecoder.decodeDrawable(source, listener)) {
+        is AnimatedImageDrawable -> DecodedVisual.Animated(drawable)
+        is BitmapDrawable -> DecodedVisual.Static(drawable.bitmap)
+        else -> DecodedVisual.Static(ImageDecoder.decodeBitmap(source, listener))
+    }
 }
 
 private suspend fun decode(
@@ -167,12 +180,18 @@ internal fun ImageViewer(
     }
     val current = images.getOrElse(currentIndex) { entry }
     val backFocus = remember { FocusRequester() }
+    val viewportFocus = remember { FocusRequester() }
+    var viewportFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { backFocus.requestFocus() }
     var zoom by remember(current.uri) { mutableFloatStateOf(1f) }
     var rotation by remember(current.uri) { mutableFloatStateOf(0f) }
     var panX by remember(current.uri) { mutableFloatStateOf(0f) }
     var panY by remember(current.uri) { mutableFloatStateOf(0f) }
     var slideshow by remember { mutableStateOf(false) }
+
+    LaunchedEffect(zoom) {
+        if (zoom <= 1f && viewportFocused) backFocus.requestFocus()
+    }
 
     LaunchedEffect(slideshow, currentIndex, images.size) {
         if (slideshow && images.size > 1) {
@@ -182,29 +201,18 @@ internal fun ImageViewer(
     }
 
     BackHandler {
-        if (zoom > 1f || panX != 0f || panY != 0f) {
-            zoom = 1f
-            panX = 0f
-            panY = 0f
-        } else {
-            onClose()
+        when {
+            viewportFocused -> backFocus.requestFocus()
+            zoom > 1f || panX != 0f || panY != 0f -> {
+                zoom = 1f
+                panX = 0f
+                panY = 0f
+            }
+            else -> onClose()
         }
     }
 
-    BoxWithConstraints(
-        Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown && zoom > 1f) {
-                val step = 120f
-                when (event.key) {
-                    Key.DirectionLeft -> { panX = (panX + step).coerceIn(-1200f, 1200f); true }
-                    Key.DirectionRight -> { panX = (panX - step).coerceIn(-1200f, 1200f); true }
-                    Key.DirectionUp -> { panY = (panY + step).coerceIn(-800f, 800f); true }
-                    Key.DirectionDown -> { false }
-                    else -> false
-                }
-            } else false
-        }
-    ) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
         val width = with(density) { maxWidth.roundToPx() }.coerceIn(1, 3840)
         val height = with(density) { maxHeight.roundToPx() }.coerceIn(1, 2160)
@@ -224,13 +232,58 @@ internal fun ImageViewer(
                 if (Build.VERSION.SDK_INT >= 28 && anim is AnimatedImageDrawable) anim.stop()
             }
         }
+        val colors = MaterialTheme.colorScheme
         Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 if (images.size > 1) "${current.name} (${currentIndex + 1}/${images.size})" else current.name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .then(
+                        if (zoom > 1f) {
+                            Modifier
+                                .focusRequester(viewportFocus)
+                                .onFocusChanged { viewportFocused = it.isFocused }
+                                .border(
+                                    width = if (viewportFocused) 2.dp else 0.dp,
+                                    color = if (viewportFocused) colors.primary else Color.Transparent
+                                )
+                                .onPreviewKeyEvent { event ->
+                                    if (!viewportFocused) return@onPreviewKeyEvent false
+                                    val step = 120f
+                                    when (event.key) {
+                                        Key.DirectionLeft -> {
+                                            if (event.type == KeyEventType.KeyDown) panX = clampPanOffset(panX, step, width, zoom)
+                                            true
+                                        }
+                                        Key.DirectionRight -> {
+                                            if (event.type == KeyEventType.KeyDown) panX = clampPanOffset(panX, -step, width, zoom)
+                                            true
+                                        }
+                                        Key.DirectionUp -> {
+                                            if (event.type == KeyEventType.KeyDown) panY = clampPanOffset(panY, step, height, zoom)
+                                            true
+                                        }
+                                        Key.DirectionDown -> {
+                                            if (event.type == KeyEventType.KeyDown) panY = clampPanOffset(panY, -step, height, zoom)
+                                            true
+                                        }
+                                        Key.DirectionCenter, Key.Enter -> {
+                                            if (event.type == KeyEventType.KeyUp) backFocus.requestFocus()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .focusable()
+                        } else Modifier
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
                 val decoded = visual
                 val transformModifier = Modifier.fillMaxSize().graphicsLayer {
                     scaleX = zoom
@@ -262,6 +315,9 @@ internal fun ImageViewer(
                     null -> Text(error ?: "Loading image…")
                 }
             }
+            if (viewportFocused) {
+                Text("Panning active: use D-pad arrows to move, OK or Back for controls.", color = colors.primary)
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -284,13 +340,17 @@ internal fun ImageViewer(
                     enabled = visual != null && zoom > 1f,
                     onClick = {
                         zoom = (zoom - .5f).coerceAtLeast(1f)
-                        if (zoom == 1f) { panX = 0f; panY = 0f }
+                        panX = clampPanOffset(panX, 0f, width, zoom)
+                        panY = clampPanOffset(panY, 0f, height, zoom)
                     }
                 ) { Text("Zoom −") }
                 Button(
                     enabled = visual != null && zoom < 3f,
                     onClick = { zoom = (zoom + .5f).coerceAtMost(3f) }
                 ) { Text("Zoom +") }
+                if (zoom > 1f) {
+                    OutlinedButton(onClick = { viewportFocus.requestFocus() }) { Text("Pan") }
+                }
                 Button(enabled = visual != null, onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate") }
                 Button(
                     enabled = visual != null,

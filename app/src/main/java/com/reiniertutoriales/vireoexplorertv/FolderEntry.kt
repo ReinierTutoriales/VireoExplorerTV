@@ -24,6 +24,8 @@ internal fun FolderEntry(
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = VireoCardShape
+    val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = shape)
+    val selectedRestingBorder = Border(BorderStroke(1.dp, colors.primary), shape = shape)
     val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = shape)
     val size = if (!entry.directory && entry.size >= 0) {
         Formatter.formatFileSize(LocalContext.current, entry.size)
@@ -35,7 +37,7 @@ internal fun FolderEntry(
             enabled = enabled,
             onClick = onClick,
             onLongClick = onLongClick,
-            modifier = modifier.heightIn(min = 112.dp),
+            modifier = modifier.heightIn(min = 116.dp),
             shape = SelectableSurfaceDefaults.shape(shape),
             colors = SelectableSurfaceDefaults.colors(
                 containerColor = colors.surface,
@@ -48,9 +50,12 @@ internal fun FolderEntry(
                 focusedSelectedContentColor = colors.onPrimaryContainer
             ),
             border = SelectableSurfaceDefaults.border(
-                focusedBorder = focusBorder, focusedSelectedBorder = focusBorder
+                border = restingBorder,
+                selectedBorder = selectedRestingBorder,
+                focusedBorder = focusBorder,
+                focusedSelectedBorder = focusBorder
             ),
-            scale = SelectableSurfaceDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
+            scale = SelectableSurfaceDefaults.scale(focusedScale = 1.02f, focusedSelectedScale = 1.02f)
         ) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.height(48.dp), contentAlignment = Alignment.CenterStart) { FileThumbnail(entry, revision) }

@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private val model by lazy { ViewModelProvider(this)[ExplorerModel::class.java] }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        addOnTrimMemoryListener { level -> trimThumbnailCache(level) }
         setContent { VireoTheme { Explorer() } }
     }
 
@@ -455,13 +456,20 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        val primaryFocus = remember { FocusRequester() }
         val deleting = deleteItemDialog
         if (deleting != null) {
             TvConfirmDialog(
                 title = if (deleting.directory) "Delete empty folder?" else "Delete file?",
                 message = deleting.name,
                 confirmLabel = "Delete",
-                onConfirm = { model.mutate { storage.delete(deleting) } },
+                onConfirm = {
+                    returnEntries.remove(parent)
+                    model.mutate {
+                        storage.delete(deleting)
+                        primaryFocus.requestFocus()
+                    }
+                },
                 onDismiss = { deleteItemDialog = null }
             )
         }
@@ -488,7 +496,6 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        val primaryFocus = remember { FocusRequester() }
         var folderActions by remember(parent) { mutableStateOf(false) }
         val actionsOpen = model.selected != null
         LaunchedEffect(parent, model.revision, folderActions) {
@@ -506,7 +513,7 @@ class MainActivity : ComponentActivity() {
                 else -> model.path = model.path.dropLast(1)
             }
         }
-        LaunchedEffect(parent, actionsOpen) { primaryFocus.requestFocus() }
+        LaunchedEffect(parent) { primaryFocus.requestFocus() }
         BackHandler { backFromFolder() }
         val item = model.selected
         if (item != null) {
@@ -754,12 +761,68 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun ClearFilterButton(label: String, icon: Int, enabled: Boolean, onClear: () -> Unit) {
-    OutlinedButton(enabled = enabled, onClick = onClear) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            ExplorerIcon(icon)
-            Text(stringResource(R.string.explorer_clear_filter, label),
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val colors = MaterialTheme.colorScheme
+    val restingBorder = Border(androidx.compose.foundation.BorderStroke(1.dp, colors.primary), shape = VireoPillShape)
+    val focusBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, colors.primary), shape = VireoPillShape)
+    Surface(
+        selected = true,
+        enabled = enabled,
+        onClick = onClear,
+        shape = SelectableSurfaceDefaults.shape(VireoPillShape),
+        colors = SelectableSurfaceDefaults.colors(
+            containerColor = colors.surface,
+            contentColor = colors.onSurface,
+            selectedContainerColor = colors.primaryContainer,
+            selectedContentColor = colors.onPrimaryContainer,
+            focusedContainerColor = colors.surfaceVariant,
+            focusedContentColor = colors.onSurface,
+            focusedSelectedContainerColor = colors.primaryContainer,
+            focusedSelectedContentColor = colors.onPrimaryContainer
+        ),
+        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.02f, focusedSelectedScale = 1.02f),
+        border = SelectableSurfaceDefaults.border(
+            border = restingBorder,
+            selectedBorder = restingBorder,
+            focusedBorder = focusBorder,
+            focusedSelectedBorder = focusBorder
+        )
+    ) {
+        Row(
+            Modifier.heightIn(min = 42.dp).padding(start = 8.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(26.dp).then(
+                    Modifier.padding(0.dp)
+                ),
+                contentAlignment = androidx.compose.ui.Alignment.Center
+            ) {
+                Surface(
+                    shape = VireoPillShape,
+                    colors = SurfaceDefaults.colors(
+                        containerColor = colors.primary,
+                        contentColor = colors.onPrimary
+                    ),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        Icon(
+                            androidx.compose.ui.res.painterResource(icon),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = colors.onPrimary
+                        )
+                    }
+                }
+            }
+            Text(
+                stringResource(R.string.explorer_clear_filter, label),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelLarge
+            )
+            Text("✕", style = MaterialTheme.typography.labelLarge, color = colors.primary)
         }
     }
 }

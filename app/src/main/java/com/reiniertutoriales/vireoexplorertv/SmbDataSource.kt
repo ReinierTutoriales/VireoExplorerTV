@@ -16,12 +16,21 @@ import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.share.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.io.IOException
 import java.util.EnumSet
 import java.util.concurrent.TimeUnit
 
-internal class SmbShareSession(private val endpoint: SmbEndpoint) : Closeable {
+internal class SmbShareSession(endpoint: SmbEndpoint) : Closeable {
+    private val host = endpoint.host
+    private val shareName = endpoint.share
+    private val user = endpoint.user
+    private val domain = endpoint.domain
+    private val secret = endpoint.password.copyOf()
+
     private val lock = Any()
     private var client: SMBClient? = null
     private var connection: Connection? = null
@@ -36,7 +45,7 @@ internal class SmbShareSession(private val endpoint: SmbEndpoint) : Closeable {
             return existing
         }
         closeResourcesLocked()
-        val password = endpoint.password.copyOf()
+        val password = secret.copyOf()
         try {
             val smbClient = SMBClient(
                 SmbConfig.builder()
@@ -46,11 +55,11 @@ internal class SmbShareSession(private val endpoint: SmbEndpoint) : Closeable {
                     .build()
             )
             client = smbClient
-            val conn = smbClient.connect(endpoint.host)
+            val conn = smbClient.connect(host)
             connection = conn
-            val sess = conn.authenticate(AuthenticationContext(endpoint.user, password, endpoint.domain))
+            val sess = conn.authenticate(AuthenticationContext(user, password, domain))
             session = sess
-            val disk = sess.connectShare(endpoint.share) as DiskShare
+            val disk = sess.connectShare(shareName) as DiskShare
             share = disk
             return disk
         } catch (e: Exception) {
@@ -61,18 +70,38 @@ internal class SmbShareSession(private val endpoint: SmbEndpoint) : Closeable {
         }
     }
 
+    private fun acquireShare(): DiskShare = synchronized(lock) { connectLocked() }
+
+    private fun reconnectAfterFailure(failedShare: DiskShare): DiskShare? = synchronized(lock) {
+        if (closed) return null
+        val current = share
+        if (current != null && current !== failedShare && current.isConnected && connection?.isConnected == true) {
+            return current
+        }
+        if (current == null || !current.isConnected || connection?.isConnected != true) {
+            closeResourcesLocked()
+            connectLocked()
+        } else null
+    }
+
     fun <T> execute(block: (DiskShare) -> T): T {
-        val active = synchronized(lock) { connectLocked() }
+        val active = acquireShare()
         return try {
             block(active)
         } catch (first: Exception) {
-            val reconnect = synchronized(lock) {
-                if (closed) throw first
-                if (share == null || share?.isConnected != true || connection?.isConnected != true) {
-                    closeResourcesLocked()
-                    connectLocked()
-                } else null
-            } ?: throw first
+            val reconnect = reconnectAfterFailure(active) ?: throw first
+            block(reconnect)
+        }
+    }
+
+    suspend fun <T> executeSuspend(block: suspend (DiskShare) -> T): T = withContext(Dispatchers.IO) {
+        val active = acquireShare()
+        try {
+            block(active)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (first: Exception) {
+            val reconnect = reconnectAfterFailure(active) ?: throw first
             block(reconnect)
         }
     }
@@ -101,8 +130,18 @@ internal class SmbShareSession(private val endpoint: SmbEndpoint) : Closeable {
 
     override fun close() {
         synchronized(lock) {
+            if (closed) return
             closed = true
+            secret.fill('\u0000')
             closeResourcesLocked()
+        }
+    }
+
+    fun closeAsync() {
+        Thread { runCatching { close() } }.apply {
+            name = "vireo-smb-close"
+            isDaemon = true
+            start()
         }
     }
 }

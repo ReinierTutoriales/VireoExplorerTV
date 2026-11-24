@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,22 +38,12 @@ internal class SmbEndpoint(val host: String, val share: String, val user: String
 private data class SmbEntry(val name: String, val directory: Boolean, val bytes: Long)
 
 private suspend fun <T> withSmbShare(session: SmbShareSession, operation: suspend (DiskShare) -> T): T =
-    withContext(Dispatchers.IO) {
-        var result: T? = null
-        var failure: Throwable? = null
-        session.execute { share ->
-            runBlocking {
-                try {
-                    result = operation(share)
-                } catch (t: Throwable) {
-                    failure = t
-                }
-            }
-        }
-        failure?.let { throw it }
-        @Suppress("UNCHECKED_CAST")
-        result as T
-    }
+    session.executeSuspend(operation)
+
+internal fun formatSmbUriAuthority(host: String): String {
+    val clean = host.substringBefore('%')
+    return if (':' in clean && !clean.startsWith('[')) "[$clean]" else clean
+}
 
 private suspend fun listSmb(session: SmbShareSession, path: String): List<SmbEntry> = withSmbShare(session) { share ->
     share.list(path).asSequence().filter { it.fileName != "." && it.fileName != ".." }
@@ -227,6 +219,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     var imageViewing by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     val server = endpoint
     val activeSession = session
+    val backFocus = remember { FocusRequester() }
 
     val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val request = pending
@@ -263,7 +256,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     }
     DisposableEffect(server, activeSession) {
         onDispose {
-            scope.launch(Dispatchers.IO) { runCatching { activeSession?.close() } }
+            activeSession?.closeAsync()
             server?.password?.fill('\u0000')
         }
     }
@@ -288,7 +281,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     }
 
     fun remoteUri(host: String, share: String, remotePath: String) =
-        android.net.Uri.Builder().scheme("smb").authority(host).appendPath(share).appendPath(remotePath).build()
+        android.net.Uri.Builder().scheme("smb").encodedAuthority(formatSmbUriAuthority(host)).appendPath(share).appendPath(remotePath).build()
 
     val media = playback
     if (media != null && server != null && activeSession != null) {
@@ -473,7 +466,11 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             confirmLabel = "Delete",
             onConfirm = {
                 transfer = scope.launch {
-                    try { deleteSmbEntry(activeSession, folder, deleting); status = "Remote item deleted" }
+                    try {
+                        deleteSmbEntry(activeSession, folder, deleting)
+                        status = "Remote item deleted"
+                        backFocus.requestFocus()
+                    }
                     catch (e: CancellationException) { throw e }
                     catch (_: Exception) { status = "Delete failed: item changed, folder not empty, access or connection" }
                     finally { transfer = null; refresh++ }
@@ -483,7 +480,6 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         )
     }
 
-    val backFocus = remember { FocusRequester() }
     LaunchedEffect(server, path) { backFocus.requestFocus() }
     Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("SMB network", style = MaterialTheme.typography.headlineMedium)
@@ -626,19 +622,22 @@ private fun SmbConnectDialog(
     onConnect: (SmbEndpoint) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var host by remember(initialHost) { mutableStateOf(initialHost) }
-    var share by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var domain by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    val hostState = rememberTextFieldState(initialHost)
+    val shareState = rememberTextFieldState()
+    val userState = rememberTextFieldState()
+    val domainState = rememberTextFieldState()
+    val passwordState = rememberTextFieldState()
     var error by remember { mutableStateOf<String?>(null) }
     val hostFocus = remember { FocusRequester() }
     val colors = MaterialTheme.colorScheme
     LaunchedEffect(Unit) { hostFocus.requestFocus() }
+    LaunchedEffect(hostState, shareState) {
+        snapshotFlow { hostState.text.toString() to shareState.text.toString() }.collect { error = null }
+    }
 
     fun submit() {
-        val cleanHost = host.trim()
-        val cleanShare = share.trim()
+        val cleanHost = hostState.text.toString().trim()
+        val cleanShare = shareState.text.toString().trim()
         when {
             cleanHost.isBlank() || cleanHost.contains('/') || cleanHost.contains('\\') -> {
                 error = "Enter a server hostname or IP"
@@ -647,14 +646,23 @@ private fun SmbConnectDialog(
                 error = "Enter a valid share name"
             }
             else -> {
-                val chars = password.toCharArray()
-                password = ""
-                onConnect(SmbEndpoint(cleanHost, cleanShare, user, domain, chars))
+                val pwdSeq = passwordState.text
+                val chars = CharArray(pwdSeq.length) { pwdSeq[it] }
+                passwordState.clearText()
+                onConnect(
+                    SmbEndpoint(
+                        cleanHost,
+                        cleanShare,
+                        userState.text.toString(),
+                        domainState.text.toString(),
+                        chars
+                    )
+                )
             }
         }
     }
 
-    Dialog(onDismissRequest = { password = ""; onDismiss() }) {
+    Dialog(onDismissRequest = { passwordState.clearText(); onDismiss() }) {
         Surface(
             shape = VireoCardShape,
             colors = SurfaceDefaults.colors(
@@ -672,33 +680,28 @@ private fun SmbConnectDialog(
             ) {
                 Text("Connect SMB", style = MaterialTheme.typography.titleLarge)
                 TvTextField(
-                    value = host,
-                    onValueChange = { host = it; error = null },
+                    state = hostState,
                     label = "Server host or IP",
-                    modifier = Modifier.focusRequester(hostFocus)
+                    inputFocusRequester = hostFocus
                 )
                 TvTextField(
-                    value = share,
-                    onValueChange = { share = it; error = null },
+                    state = shareState,
                     label = "Share name"
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TvTextField(
-                        value = user,
-                        onValueChange = { user = it },
+                        state = userState,
                         label = "Username",
                         modifier = Modifier.weight(1f)
                     )
                     TvTextField(
-                        value = domain,
-                        onValueChange = { domain = it },
+                        state = domainState,
                         label = "Domain (optional)",
                         modifier = Modifier.weight(1f)
                     )
                 }
                 TvTextField(
-                    value = password,
-                    onValueChange = { password = it },
+                    state = passwordState,
                     label = "Password",
                     password = true,
                     imeAction = ImeAction.Done,
@@ -709,7 +712,7 @@ private fun SmbConnectDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
                 ) {
-                    OutlinedButton(onClick = { password = ""; onDismiss() }) { Text("Cancel") }
+                    OutlinedButton(onClick = { passwordState.clearText(); onDismiss() }) { Text("Cancel") }
                     Button(onClick = ::submit) { Text("Connect") }
                 }
             }
