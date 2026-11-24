@@ -26,7 +26,7 @@ jobs:
           fi
           test -x "$sdkmanager_path"
           "$sdkmanager_path" "platforms;android-37.2"
-      - run: gradle assembleDebug testDebugUnitTest lintDebug --stacktrace
+      - run: gradle assembleDebug testDebugUnitTest lintDebug assembleRelease --stacktrace
       - uses: actions/upload-artifact@v7
         with:
           name: VireoExplorerTV-debug

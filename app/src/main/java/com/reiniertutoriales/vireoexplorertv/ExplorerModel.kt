@@ -16,6 +16,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
     var path: List<Pair<Uri, String>>
         get() = currentPath
         set(value) {
+            if (currentPath.lastOrNull()?.first != value.lastOrNull()?.first) error = null
             currentPath = value
             savedState["pathUris"] = ArrayList(value.map { it.first.toString() })
             savedState["pathLabels"] = ArrayList(value.map { it.second })
@@ -73,12 +74,14 @@ internal class ExplorerModel(application: Application, private val savedState: S
         val changed = loadedParent != parent
         loadedParent = parent
         loadedRevision = revision
-        freeBytes = null
-        if (changed) search = ""
-        multi = false
-        marked = emptySet()
-        entries = emptyList()
-        selected = null
+        if (changed) {
+            freeBytes = null
+            search = ""
+            multi = false
+            marked = emptySet()
+            entries = emptyList()
+            selected = null
+        }
         busy = parent != null
         if (parent == null) return
         loadJob = viewModelScope.launch {
@@ -86,12 +89,35 @@ internal class ExplorerModel(application: Application, private val savedState: S
                 val result = storage.children(parent)
                 if (generation != loadGeneration) return@launch
                 entries = result
-                val available = storage.availableBytes(parent)
-                if (generation == loadGeneration) freeBytes = available
+                if (marked.isNotEmpty()) {
+                    marked = result.mapNotNullTo(mutableSetOf()) { if (it.uri in marked) it.uri else null }
+                }
+                selected = selected?.let { saved -> result.firstOrNull { it.uri == saved.uri } }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (generation == loadGeneration) error = e.localizedMessage ?: "Cannot read folder" }
+            catch (e: Exception) {
+                if (generation == loadGeneration) {
+                    entries = emptyList()
+                    marked = emptySet()
+                    multi = false
+                    selected = null
+                    freeBytes = null
+                    error = e.localizedMessage ?: "Cannot read folder"
+                }
+            }
             finally { if (generation == loadGeneration) busy = false }
         }
+    }
+
+    suspend fun loadAvailableSpace(parent: Uri) {
+        freeBytes = null
+        val available = try {
+            storage.availableBytes(parent)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        if (path.lastOrNull()?.first == parent) freeBytes = available
     }
 
     fun mutate(action: suspend () -> Unit) {

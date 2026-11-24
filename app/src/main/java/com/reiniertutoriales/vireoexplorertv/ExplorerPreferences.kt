@@ -24,6 +24,8 @@ internal class ExplorerPreferences(context: Context) {
     val settings = store.data.catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { ExplorerSettings(it[grid] ?: false, (it[sort] ?: 0).coerceIn(0, 3), decode(it[favorites]), decode(it[recent])) }
     suspend fun toggleGrid() { store.edit { it[grid] = !(it[grid] ?: false) } }
+    suspend fun setGrid(enabled: Boolean) { store.edit { it[grid] = enabled } }
+    suspend fun setSort(index: Int) { store.edit { it[sort] = index.coerceIn(0, 3) } }
     suspend fun nextSort() { store.edit { it[sort] = ((it[sort] ?: 0).coerceIn(0, 3) + 1) % 4 } }
     suspend fun toggleFavorite(uri: String) {
         store.edit { prefs ->

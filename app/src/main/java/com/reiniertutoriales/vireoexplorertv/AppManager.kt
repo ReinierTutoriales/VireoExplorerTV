@@ -1,7 +1,7 @@
 package com.reiniertutoriales.vireoexplorertv
 
 import android.content.Intent
-import android.annotation.TargetApi
+import androidx.annotation.RequiresApi
 import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.provider.Settings
@@ -16,9 +16,13 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,6 +56,8 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
         try { context.startActivity(intent) }
         catch (_: Exception) { error = "System action unavailable on this device" }
     }
+    val backFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { backFocus.requestFocus() }
     BackHandler(onBack = onClose)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         statsJob?.cancel()
@@ -81,9 +87,9 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
         finally { loading = false }
     }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Applications and system storage")
+        Text("Apps & storage", style = MaterialTheme.typography.headlineMedium)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onClose) { Text("Back") }
+            Button(modifier = Modifier.focusRequester(backFocus), onClick = onClose) { Text("Back") }
             Button(onClick = { open(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }) { Text("System storage") }
             Button(onClick = { open(Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS)) }) { Text("Manage apps") }
             Button(onClick = { showSystem = !showSystem }) { Text(if (showSystem) "Hide system" else "Show system") }
@@ -120,7 +126,13 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                             } catch (_: SecurityException) { emptyMap() }
                         }
                         if (sizes.size < snapshot.size) error = "Some statistics unavailable; check usage access"
-                    } finally { measuring = false }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        error = "Application statistics unavailable; check usage access"
+                    } finally {
+                        measuring = false
+                    }
                 }
             }) { Text("Measure applications") }
             Button(onClick = { sort = (sort + 1) % 4 }) { Text(listOf("Name", "Largest", "Cache", "Recent use")[sort]) }
@@ -144,13 +156,21 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                     Text("Package totals may include shared code; cache is not guaranteed recoverable.")
                 }
             }
-            item { Text("Cleanup — authorized folders") }
+            item {
+                Text("Cleanup", style = MaterialTheme.typography.titleMedium)
+                if (roots.isEmpty()) Text("Use Add folder on the home screen to authorize folders for analysis.")
+            }
             items(roots, key = { "cleanup:$it" }) { root ->
                 Button(onClick = { onAnalyze(root) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Analyze: " + android.provider.DocumentsContract.getTreeDocumentId(root))
                 }
             }
-            item { Text("Applications") }
+            item {
+                Text("Applications", style = MaterialTheme.typography.titleMedium)
+                if (!loading && error == null && apps.none { showSystem || !it.system }) {
+                    Text(if (showSystem) "No visible apps." else "No user apps are visible. Choose Show system to include system apps.")
+                }
+            }
             items(apps.filter { showSystem || !it.system }.let { visible ->
                 when (sort) {
                     1 -> visible.sortedByDescending { sizes[it.pkg]?.total ?: -1L }
@@ -162,7 +182,8 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))) }, modifier = Modifier.weight(1f)) {
                     Column {
-                        Text(app.name); Text(app.pkg)
+                        Text(app.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(app.pkg, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (sort == 3) Text(lastUsed[app.pkg]?.let {
                             "Last reported use: " + android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it))
                         } ?: "No usage reported in last 30 days")
@@ -181,9 +202,8 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     }
 }
 
-@TargetApi(26)
+@RequiresApi(26)
 private fun applicationStorage(context: android.content.Context, pkg: String): AppSize {
-    check(android.os.Build.VERSION.SDK_INT >= 26)
     val info = context.packageManager.getApplicationInfo(pkg, 0)
     val manager = requireNotNull(context.getSystemService(android.app.usage.StorageStatsManager::class.java))
     val stats = manager.queryStatsForPackage(info.storageUuid, pkg, android.os.Process.myUserHandle())

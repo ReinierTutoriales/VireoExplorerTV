@@ -1,0 +1,54 @@
+<resources>
+    <string name="explorer_home">Inicio</string>
+    <string name="explorer_files">Archivos</string>
+    <string name="explorer_network">Red</string>
+    <string name="explorer_cleaner">Limpiador</string>
+    <string name="explorer_transfers">Transferencias</string>
+    <string name="explorer_favorites">Favoritos</string>
+    <string name="explorer_search">Buscar archivos</string>
+    <string name="explorer_settings">Ajustes</string>
+    <string name="explorer_storage">Almacenamiento</string>
+    <string name="explorer_categories">Categorías</string>
+    <string name="explorer_internal">Interno</string>
+    <string name="explorer_usb">USB</string>
+    <string name="explorer_local_network">Red local</string>
+    <string name="explorer_folders">Carpetas</string>
+    <string name="explorer_videos">Vídeos</string>
+    <string name="explorer_audio">Audio</string>
+    <string name="explorer_photos">Fotos</string>
+    <string name="explorer_documents">Documentos</string>
+    <string name="explorer_archives">Archivos ZIP</string>
+    <string name="explorer_apk">Archivos APK</string>
+    <string name="explorer_add_folder">Añadir carpeta</string>
+    <string name="explorer_authorized">Carpetas autorizadas</string>
+    <string name="explorer_recent">Carpetas recientes</string>
+    <string name="explorer_no_favorites">Todavía no hay carpetas favoritas.</string>
+    <string name="explorer_no_transfer">No hay transferencias en curso.</string>
+    <string name="explorer_usb_unavailable">No se detectó almacenamiento USB. Conecta una unidad y vuelve a intentarlo.</string>
+    <string name="explorer_category_scope">Elige una carpeta autorizada para filtrar su contenido.</string>
+    <string name="explorer_no_category_files">No hay archivos de este tipo en esta carpeta.</string>
+    <string name="explorer_folder_access">Selecciona Añadir carpeta para autorizar el acceso a archivos locales o USB.</string>
+    <string name="explorer_remove_favorite">Quitar de favoritos</string>
+    <string name="explorer_clear_recent">Borrar recientes</string>
+    <string name="explorer_clear_queue">Borrar selección</string>
+    <string name="explorer_transfer_progress">%1$s transferidos</string>
+    <string name="explorer_cancel_transfer">Cancelar transferencia</string>
+    <string name="explorer_grid">Vista de cuadrícula</string>
+    <string name="explorer_list">Vista de lista</string>
+    <string name="explorer_grid_active">Los archivos se muestran como tarjetas</string>
+    <string name="explorer_list_active">Los archivos se muestran en una lista</string>
+    <string name="explorer_sort_by">Ordenar por</string>
+    <string name="explorer_sort_name_ascending">Nombre A–Z</string>
+    <string name="explorer_sort_name_descending">Nombre Z–A</string>
+    <string name="explorer_sort_largest">Primero los más grandes</string>
+    <string name="explorer_sort_smallest">Primero los más pequeños</string>
+    <string name="explorer_clear_filter">Quitar: %1$s</string>
+    <plurals name="explorer_copy_queue">
+        <item quantity="one">Selección para copiar: %1$d archivo</item>
+        <item quantity="other">Selección para copiar: %1$d archivos</item>
+    </plurals>
+    <plurals name="explorer_move_queue">
+        <item quantity="one">Selección para mover: %1$d archivo</item>
+        <item quantity="other">Selección para mover: %1$d archivos</item>
+    </plurals>
+</resources>

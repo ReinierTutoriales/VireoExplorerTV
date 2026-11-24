@@ -13,13 +13,22 @@ import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
 import java.util.EnumSet
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
+import androidx.tv.material3.DenseListItem
+import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
@@ -144,18 +153,22 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     var services by remember { mutableStateOf<List<SmbService>>(emptyList()) }
     var discoveredHost by remember { mutableStateOf("") }
     var resolving by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(discovering) {
         if (discovering) {
             services = emptyList()
-            try { withTimeoutOrNull(15000) { discoverSmb(context).collect { services = it } } }
+            status = null
+            try {
+                withTimeoutOrNull(15000) { discoverSmb(context).collect { services = it } }
+                if (services.isEmpty()) status = "No SMB servers found. You can enter the host manually."
+            }
             catch (e: CancellationException) { throw e }
-            catch (_: Exception) { services = emptyList() }
+            catch (_: Exception) { status = "Unable to discover SMB servers" }
             finally { discovering = false }
         }
     }
     var pending by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     var transfer by remember { mutableStateOf<Job?>(null) }
-    var status by remember { mutableStateOf<String?>(null) }
     var playback by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     val server = endpoint
     val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -192,7 +205,14 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         }
     }
     DisposableEffect(server) { onDispose { server?.password?.fill('\u0000') } }
-    fun back() { if (transfer != null) return; if (path.isNotEmpty()) path = path.dropLast(1) else onClose() }
+    fun back() {
+        if (transfer != null) return
+        when {
+            path.isNotEmpty() -> path = path.dropLast(1)
+            server != null -> { endpoint = null; status = null }
+            else -> onClose()
+        }
+    }
     BackHandler { back() }
     LaunchedEffect(server, path, refresh) {
         entries = emptyList(); error = null
@@ -243,44 +263,67 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         MediaViewer(Entry(uri, media.second.name, mime, media.second.bytes, 0), factory, sidecars = remoteSidecars.map { it.first }, onClose = { playback = null })
         return
     }
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("SMB 2/3 · browse and transfer")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { back() }) { Text("Back") }
+    val backFocus = remember { FocusRequester() }
+    LaunchedEffect(server, path) { backFocus.requestFocus() }
+    Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("SMB network", style = MaterialTheme.typography.headlineMedium)
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(modifier = Modifier.focusRequester(backFocus), enabled = transfer == null, onClick = { back() }) { Text(if (server != null && path.isEmpty()) "Disconnect" else "Back") }
             Button(enabled = !loading && transfer == null && !credentialBusy, onClick = {
                 val fields = listOf("Server host or IP", "Share name", "Username", "Domain (optional)", "Password").map { label ->
                     EditText(context).apply { hint = label; setSingleLine(true) }
                 }
                 fields.first().setText(discoveredHost)
                 fields.last().inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                val layout = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; fields.forEach { addView(it) } }
-                AlertDialog.Builder(context).setTitle("Connect SMB").setView(layout).setNegativeButton("Cancel", null)
-                    .setPositiveButton("Connect") { _, _ ->
+                val layout = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    fields.forEach { addView(it) }
+                }
+                val form = android.widget.ScrollView(context).apply { addView(layout) }
+                val dialog = AlertDialog.Builder(context).setTitle("Connect SMB").setView(form)
+                    .setNegativeButton("Cancel", null).setPositiveButton("Connect", null).create()
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                         val host = fields[0].text.toString().trim()
                         val share = fields[1].text.toString().trim()
-                        if (host.isBlank() || share.isBlank() || host.contains('/') || share.contains('/') || share.contains('\\')) {
-                            error = "Enter a valid server and share"
-                        } else {
-                            endpoint = SmbEndpoint(host, share, fields[2].text.toString(), fields[3].text.toString(), fields[4].text.toString().toCharArray())
-                            path = emptyList()
+                        when {
+                            host.isBlank() || host.contains('/') || host.contains('\\') -> {
+                                fields[0].error = "Enter a server hostname or IP"
+                                fields[0].requestFocus()
+                            }
+                            !validSmbName(share) -> {
+                                fields[1].error = "Enter a valid share name"
+                                fields[1].requestFocus()
+                            }
+                            else -> {
+                                val secret = fields[4].text
+                                endpoint = SmbEndpoint(host, share, fields[2].text.toString(),
+                                    fields[3].text.toString(), CharArray(secret.length) { secret[it] })
+                                path = emptyList()
+                                status = null
+                                discovering = false
+                                dialog.dismiss()
+                            }
                         }
-                        fields.last().text.clear()
-                    }.show()
+                    }
+                }
+                dialog.setOnDismissListener { fields.last().text.clear() }
+                dialog.show()
             }) { Text("Connect") }
-            Button(enabled = server != null && !loading && transfer == null, onClick = { refresh++ }) { Text("Refresh") }
-            Button(enabled = server != null && !loading && transfer == null && pending == null, onClick = {
-                try { upload.launch(arrayOf("*/*")) } catch (_: Exception) { status = "System file picker unavailable" }
-            }) { Text("Upload") }
-            Button(enabled = server != null && !loading && transfer == null, onClick = {
-                val active = server ?: return@Button
-                val folder = path.toList()
-                editName("New remote folder", "") { createSmbFolder(active, folder, it) }
-            }) { Text("New folder") }
+            if (server != null) {
+                OutlinedButton(enabled = !loading && transfer == null, onClick = { refresh++ }) { Text("Refresh") }
+                OutlinedButton(enabled = !loading && transfer == null && pending == null, onClick = {
+                    try { upload.launch(arrayOf("*/*")) } catch (_: Exception) { status = "System file picker unavailable" }
+                }) { Text("Upload") }
+                OutlinedButton(enabled = !loading && transfer == null, onClick = {
+                    val folder = path.toList()
+                    editName("New remote folder", "") { createSmbFolder(server, folder, it) }
+                }) { Text("New folder") }
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(enabled = server != null && !loading && transfer == null && !credentialBusy, onClick = {
-                val active = server ?: return@Button
-                val snapshot = SmbEndpoint(active.host, active.share, active.user, active.domain, active.password.copyOf())
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (server != null) OutlinedButton(enabled = !loading && transfer == null && !credentialBusy, onClick = {
+                val snapshot = SmbEndpoint(server.host, server.share, server.user, server.domain, server.password.copyOf())
                 credentialBusy = true
                 scope.launch {
                     try { credentials.save(snapshot); status = "Connection saved encrypted" }
@@ -289,19 +332,19 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     finally { snapshot.password.fill('\u0000'); credentialBusy = false }
                 }
             }) { Text("Remember connection") }
-            Button(enabled = !loading && transfer == null && !credentialBusy, onClick = {
+            OutlinedButton(enabled = !loading && transfer == null && !credentialBusy, onClick = {
                 credentialBusy = true
                 scope.launch {
                     try {
                         val saved = credentials.load()
                         if (saved == null) status = "No saved connection"
-                        else { endpoint = saved; path = emptyList(); status = null }
+                        else { endpoint = saved; path = emptyList(); status = null; discovering = false }
                     } catch (e: CancellationException) { throw e }
                     catch (_: Exception) { status = "Saved credentials unavailable; forget and reconnect" }
                     finally { credentialBusy = false }
                 }
             }) { Text("Saved connection") }
-            Button(enabled = !credentialBusy && transfer == null, onClick = {
+            OutlinedButton(enabled = !credentialBusy && transfer == null, onClick = {
                 credentialBusy = true
                 scope.launch {
                     try { credentials.forget(); status = "Saved connection removed" }
@@ -311,13 +354,13 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 }
             }) { Text("Forget saved") }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (server == null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(enabled = transfer == null && !resolving, onClick = { discovering = !discovering }) {
                 Text(if (discovering) "Stop discovery" else "Find SMB servers")
             }
             if (discoveredHost.isNotEmpty()) Text("Selected: $discoveredHost · use Connect")
         }
-        if (services.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 120.dp)) {
+        if (server == null && services.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 120.dp)) {
             items(services, key = { it.name }) { service ->
                 Button(enabled = !resolving && transfer == null, onClick = {
                     resolving = true
@@ -331,44 +374,79 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 }) { Text(service.name) }
             }
         }
-        Text(path.joinToString(" / ").ifEmpty { server?.share ?: "Enter server credentials" })
+        Text(
+            server?.let { (listOf(it.host, it.share) + path).joinToString(" / ") }
+                ?: "Connect to a shared folder on your local network.",
+            style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
         status?.let { Text(it) }
         if (transfer != null) Button(onClick = { transfer?.cancel() }) { Text("Cancel transfer") }
         if (loading) Text("Connecting…")
-        error?.let { Text(it) }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (server != null && !loading && error == null && entries.isEmpty()) Text("This share folder is empty.")
+        LazyColumn(Modifier.weight(1f).focusRestorer(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.name }) { entry ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (entry.directory) Button(enabled = transfer == null, onClick = { path = path + entry.name }, modifier = Modifier.weight(1f)) { Text(entry.name) }
-                else {
-                    val mime = mediaMime(entry.name)
-                    if (mime.startsWith("video/") || mime.startsWith("audio/")) Button(enabled = transfer == null, onClick = { playback = (path + entry.name).joinToString("\\") to entry }) { Text("Play") }
-                    Button(enabled = transfer == null && pending == null && entry.bytes >= 0, onClick = {
-                    pending = (path + entry.name).joinToString("\\") to entry
+                val mime = mediaMime(entry.name)
+                val video = mime.startsWith("video/")
+                val audio = mime.startsWith("audio/")
+                val playable = !entry.directory && (video || audio)
+                val remotePath = (path + entry.name).joinToString("\\")
+                val entryAvailable = server != null && !loading && transfer == null
+                val canDownload = entryAvailable && pending == null && entry.bytes >= 0
+                fun download() {
+                    pending = remotePath to entry
                     try { destination.launch(entry.name) }
                     catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
-                }, modifier = Modifier.weight(1f)) { Text("Download ${entry.name} · ${entry.bytes / 1024} KiB") }
                 }
-                Button(enabled = server != null && transfer == null && !loading, onClick = {
-                    val active = server ?: return@Button
-                    val folder = path.toList()
-                    editName("Rename remote item", entry.name) { renameSmbEntry(active, folder, entry, it) }
-                }) { Text("Rename") }
-                Button(enabled = server != null && transfer == null && !loading, onClick = {
-                    val active = server ?: return@Button
-                    val folder = path.toList()
-                    AlertDialog.Builder(context).setTitle("Permanently delete remote item?")
-                        .setMessage(entry.name + if (entry.directory) "\nOnly empty folders can be deleted." else "\nThis cannot be undone.")
-                        .setNegativeButton("Cancel", null)
-                        .setPositiveButton("Delete") { _, _ ->
-                            transfer = scope.launch {
-                                try { deleteSmbEntry(active, folder, entry); status = "Remote item deleted" }
-                                catch (e: CancellationException) { throw e }
-                                catch (_: Exception) { status = "Delete failed: item changed, folder not empty, access or connection" }
-                                finally { transfer = null; refresh++ }
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DenseListItem(
+                        selected = false,
+                        enabled = entryAvailable && (entry.directory || playable || canDownload),
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            when {
+                                entry.directory -> path = path + entry.name
+                                playable -> playback = remotePath to entry
+                                else -> download()
                             }
-                        }.show()
-                }) { Text("Delete") }
+                        },
+                        headlineContent = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = {
+                            ExplorerIcon(when {
+                                entry.directory -> R.drawable.symbol_folder
+                                video -> R.drawable.symbol_movie
+                                audio -> R.drawable.symbol_music_note
+                                else -> R.drawable.symbol_description
+                            })
+                        },
+                        trailingContent = if (!entry.directory && entry.bytes >= 0) {
+                            { Text(android.text.format.Formatter.formatFileSize(context, entry.bytes)) }
+                        } else null
+                    )
+                    if (playable) OutlinedButton(enabled = canDownload, onClick = ::download) { Text("Download") }
+                    Button(enabled = server != null && transfer == null && !loading, onClick = {
+                        val active = server ?: return@Button
+                        val folder = path.toList()
+                        editName("Rename remote item", entry.name) { renameSmbEntry(active, folder, entry, it) }
+                    }) { Text("Rename") }
+                    Button(enabled = server != null && transfer == null && !loading, onClick = {
+                        val active = server ?: return@Button
+                        val folder = path.toList()
+                        AlertDialog.Builder(context).setTitle("Permanently delete remote item?")
+                            .setMessage(entry.name + if (entry.directory) "\nOnly empty folders can be deleted." else "\nThis cannot be undone.")
+                            .setNegativeButton("Cancel", null)
+                            .setPositiveButton("Delete") { _, _ ->
+                                transfer = scope.launch {
+                                    try { deleteSmbEntry(active, folder, entry); status = "Remote item deleted" }
+                                    catch (e: CancellationException) { throw e }
+                                    catch (_: Exception) { status = "Delete failed: item changed, folder not empty, access or connection" }
+                                    finally { transfer = null; refresh++ }
+                                }
+                            }.show().getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus()
+                    }) { Text("Delete") }
                 }
             }
         }
