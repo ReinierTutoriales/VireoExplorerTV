@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
         var selected by remember { mutableStateOf<Entry?>(null) }
         var viewing by remember { mutableStateOf<Entry?>(null) }
         var clipboard by remember { mutableStateOf<Pair<List<Entry>, Boolean>?>(null) }
+        var conflictPolicy by remember { mutableStateOf(ConflictPolicy.STOP) }
         var clipboardParent by remember { mutableStateOf<Uri?>(null) }
         var multi by remember { mutableStateOf(false) }
         var marked by remember { mutableStateOf<Set<Uri>>(emptySet()) }
@@ -173,6 +174,7 @@ class MainActivity : ComponentActivity() {
                     Text((if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name })
                     Button(enabled = parent != null && writable && !mutating && !busy, onClick = {
                         val destination = parent ?: return@Button
+                        val policy = conflictPolicy
                         mutating = true
                         transferred = 0
                         transferJob = scope.launch {
@@ -181,23 +183,31 @@ class MainActivity : ComponentActivity() {
                                     if (bytes - transferred >= 1024 * 1024) transferred = bytes
                                 }
                                 var completed = 0
+                                var skipped = 0
                                 for (entry in pending.first) {
                                     transferred = 0
                                     try {
-                                        if (entry.directory && pending.second) storage.moveDirectory(entry, checkNotNull(clipboardParent), destination)
-                                        else if (entry.directory) storage.copyDirectory(entry, destination, report)
-                                        else storage.transfer(entry, destination, pending.second, report)
+                                        val names = storage.children(destination).map { it.name }
+                                        val name = resolveConflict(entry.name, entry.directory, names, policy)
+                                        if (name == null) skipped++
+                                        else if (entry.directory && pending.second) {
+                                            check(name == entry.name) { "Native folder move cannot rename on conflict" }
+                                            storage.moveDirectory(entry, checkNotNull(clipboardParent), destination)
+                                        } else if (entry.directory) storage.copyDirectory(entry, destination, name, report)
+                                        else storage.transfer(entry, destination, pending.second, name, report)
                                         completed++
                                         clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
                                     } catch (e: CancellationException) { throw e }
                                     catch (e: Exception) { throw IllegalStateException("$completed of ${pending.first.size} items completed: ${e.localizedMessage}", e) }
                                 }
                                 clipboard = null
+                                if (skipped > 0) error = "$skipped conflicting items skipped; originals preserved"
                             } catch (e: CancellationException) { throw e }
                             catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
                             finally { mutating = false; transferJob = null; revision++ }
                         }
                     }) { Text("Paste") }
+                    Button(enabled = !mutating, onClick = { conflictPolicy = ConflictPolicy.entries[(conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size] }) { Text(conflictPolicy.label) }
                     Button(enabled = !mutating, onClick = { clipboard = null }) { Text("Clear") }
                 }
             }

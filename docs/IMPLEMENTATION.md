@@ -69,3 +69,5 @@ CI 45444038075 passed. Added multi-selection, select visible, batch copy of file
 CI 45444597042 passed. Added provider-native directory move via DocumentsContract.moveDocument when FLAG_SUPPORTS_MOVE is present, restricted to same persisted tree, with source parent, descendant and conflict checks. No recursive deletion fallback. New CI pending.
 
 CI 45445805113 failed NewApi for isChildDocument (API29). Added API guard and bounded cancellable directory traversal on API24–28, fail closed on traversal limits. Added optional provider-reported available bytes using DocumentsContract root metadata, only exact root document ID matches; unknown space remains hidden. New CI pending.
+
+CI 45446808435 passed. Added stop/skip/keep-both conflict policies, case-insensitive alternate naming, per-item destination checks and three naming tests. Native folder move cannot rename on conflict; no overwrite policy. New CI pending.

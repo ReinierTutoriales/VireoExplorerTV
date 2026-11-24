@@ -157,7 +157,7 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         checkNotNull(D.moveDocument(resolver, entry.uri, sourceParent, destination)) { "Provider move failed" }
     }
-    suspend fun copyDirectory(entry: Entry, parent: Uri, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
+    suspend fun copyDirectory(entry: Entry, parent: Uri, destinationName: String = entry.name, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         require(entry.directory && validName(entry.name))
         requireGrant(entry.uri)
         requireGrant(parent, true)
@@ -180,8 +180,8 @@ class Storage(private val resolver: ContentResolver) {
             items.filter { it.directory }.forEach { queue.add(it to depth + 1) }
             check(queue.size <= 10000 - count) { "Directory copy limit exceeded" }
         }
-        check(children(parent).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
-        val target = create(parent, entry.name)
+        check(children(parent).none { it.name.equals(destinationName, ignoreCase = true) }) { "Destination already exists" }
+        val target = create(parent, destinationName)
         val destinations = HashMap<Uri, Uri>()
         destinations[entry.uri] = target
         var total = 0L
@@ -208,13 +208,13 @@ class Storage(private val resolver: ContentResolver) {
             throw IllegalStateException("Directory copy incomplete; destination may contain copied files", e)
         }
     }
-    suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
+    suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, destinationName: String = entry.name, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         requireGrant(entry.uri, move)
         requireGrant(parent, true)
-        require(!entry.directory && validName(entry.name))
+        require(!entry.directory && validName(entry.name) && validName(destinationName))
         if (move) check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
-        check(children(parent).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
-        val target = checkNotNull(D.createDocument(resolver, parent, entry.mime, entry.name))
+        check(children(parent).none { it.name.equals(destinationName, ignoreCase = true) }) { "Destination already exists" }
+        val target = checkNotNull(D.createDocument(resolver, parent, entry.mime, destinationName))
         var verified = false
         try {
             check(target != entry.uri) { "Destination equals source" }
