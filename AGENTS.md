@@ -13,3 +13,6 @@ Android TV / Google TV project. At adoption the repository contains only README.
 
 ## Skills
 Read relevant instructions in .agents/skills: agent-governance before repository changes, precise-coding for implementation, code-quality for auditing, testing-discipline for validation, tv-ui for interface changes, upstream-port for dependency and upstream research, no-ai-slop for prose only.
+
+## Binding product and execution specifications
+Read [architecture](docs/ARCHITECTURE.md) and [execution](docs/EXECUTION.md) before implementation. Apply native-tv-development, storage-media-network and efficient-delivery skills alongside existing skills. These documents define the complete target, not implemented features. Keep implementation status and evidence accurate. Prefer minimum complete passes, never skip validation.
