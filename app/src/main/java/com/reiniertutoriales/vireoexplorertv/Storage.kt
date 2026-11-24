@@ -33,6 +33,44 @@ class Storage(private val resolver: ContentResolver) {
             }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
         }
     }
+    suspend fun gzip(entry: Entry, parent: Uri, extract: Boolean, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
+        require(!entry.directory)
+        requireGrant(entry.uri)
+        requireGrant(parent, true)
+        revalidate(entry)
+        require(!extract || entry.name.endsWith(".gz", true))
+        val name = if (extract) entry.name.dropLast(3) else entry.name + ".gz"
+        require(validName(name))
+        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
+        val mime = if (extract) android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) ?: "application/octet-stream" else "application/gzip"
+        val target = checkNotNull(D.createDocument(resolver, parent, mime, name))
+        var total = 0L
+        val buffer = ByteArray(64 * 1024)
+        suspend fun copy(input: java.io.InputStream, output: java.io.OutputStream) {
+            while (true) {
+                coroutineContext.ensureActive()
+                val n = input.read(buffer)
+                if (n < 0) break
+                total += n
+                check(total <= 4L * 1024 * 1024 * 1024) { "GZIP size limit exceeded" }
+                output.write(buffer, 0, n)
+                progress(total)
+            }
+        }
+        try {
+            checkNotNull(resolver.openInputStream(entry.uri)).buffered().use { input ->
+                checkNotNull(resolver.openOutputStream(target, "w")).buffered().use { output ->
+                    if (extract) java.util.zip.GZIPInputStream(input).use { copy(it, output) }
+                    else java.util.zip.GZIPOutputStream(output).use { copy(input, it) }
+                }
+            }
+            check(extract || entry.size < 0 || total == entry.size) { "Source size changed" }
+            revalidate(entry)
+        } catch (e: Exception) {
+            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, target) } }
+            throw e
+        }
+    }
     suspend fun createZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
