@@ -38,6 +38,8 @@ import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.common.MediaMetadata
 import androidx.tv.material3.Button
 import androidx.tv.material3.Text
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,6 +73,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     var positionMs by remember(entry.uri) { mutableLongStateOf(0L) }
     var durationMs by remember(entry.uri) { mutableLongStateOf(C.TIME_UNSET) }
     var buffering by remember { mutableStateOf(false) }
+    var metadata by remember(entry.uri) { mutableStateOf(MediaMetadata.EMPTY) }
+    var aspect by remember(entry.uri) { mutableIntStateOf(0) }
+    var speedIndex by remember(entry.uri) { mutableIntStateOf(1) }
+    val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+    val aspectModes = listOf(AspectRatioFrameLayout.RESIZE_MODE_FIT, AspectRatioFrameLayout.RESIZE_MODE_ZOOM, AspectRatioFrameLayout.RESIZE_MODE_FILL)
+    val aspectLabels = listOf("Fit", "Zoom", "Stretch")
+    LaunchedEffect(player, speedIndex) { player?.setPlaybackSpeed(speeds[speedIndex]) }
     LaunchedEffect(player) {
         val active = player ?: return@LaunchedEffect
         while (true) {
@@ -117,6 +126,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             p.setAudioAttributes(AudioAttributes.DEFAULT, true)
             p.setHandleAudioBecomingNoisy(true)
             p.addListener(object : Player.Listener {
+                override fun onMediaMetadataChanged(value: MediaMetadata) { metadata = value }
                 override fun onPlaybackStateChanged(state: Int) { buffering = state == Player.STATE_BUFFERING }
                 override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
                 override fun onTracksChanged(value: Tracks) { tracks = value }
@@ -166,14 +176,15 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             useController = false
             isFocusable = false
             layoutParams = ViewGroup.LayoutParams(-1, -1)
-        } }, update = { it.player = player; it.keepScreenOn = playing },
+        } }, update = { it.player = player; it.keepScreenOn = playing; it.resizeMode = aspectModes[aspect] },
             onRelease = { it.player = null; it.keepScreenOn = false },
             modifier = Modifier.fillMaxSize())
         if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
         if (controlsVisible || buffering || error != null) Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).padding(16.dp)
         ) {
-        Text(entry.name)
+        Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name)
+        if (!video) metadata.artist?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it) }
         if (buffering) Text("Buffering…")
         error?.let { Text(it) }
         if (durationMs > 0) {
@@ -211,6 +222,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             Button(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekBack() }) { Text("−10s") }
             Button(modifier = Modifier.focusRequester(controlsFocus), enabled = p != null, onClick = { p?.let { if (it.isPlaying) it.pause() else it.play() } }) { Text(if (playing) "Pause" else "Play") }
             Button(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekForward() }) { Text("+10s") }
+            if (video) Button(onClick = { aspect = (aspect + 1) % aspectModes.size }) { Text(aspectLabels[aspect]) }
+            Button(enabled = p != null, onClick = { speedIndex = (speedIndex + 1) % speeds.size }) { Text(speeds[speedIndex].toString() + "×") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }, onClick = { trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }, onClick = { trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
             Button(enabled = p != null, onClick = { try { picker.launch(arrayOf("*/*")) } catch (e: Exception) { error = "Subtitle picker unavailable" } }) { Text("External") }

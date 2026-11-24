@@ -103,3 +103,5 @@ Scope correction: removed GZIP/TAR/TGZ code and UI, Commons Compress catalog/bui
 CI 45459858303 passed after ZIP-only cleanup. Media3 player now exposes elapsed/duration progress, buffering state, explicit 10-second seek increments, seekability gating and horizontally scrollable TV controls. Applies to local and SMB playback. No new dependencies. New CI pending; runtime focus and streaming validation pending.
 
 CI 45460943253 passed. MediaViewer full-size PlayerView with bottom TV overlay, four-second auto-hide during video playback, D-pad key-up reveal and focus restoration, persistent audio controls. No new dependencies. New CI and actual focus/SurfaceView overlay validation pending.
+
+CI 45461762052 passed. Media3 native resize modes fit/zoom/stretch, playback speed 0.75–2x, media metadata title/artist listener, local and SMB shared player. No new dependencies. New CI and runtime validation pending. HDR and codec capability reporting not implemented in this batch.
