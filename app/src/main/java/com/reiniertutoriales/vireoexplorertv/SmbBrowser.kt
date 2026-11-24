@@ -188,6 +188,19 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val credentials = remember(context) { SmbCredentials(context) }
     var credentialBusy by remember { mutableStateOf(false) }
+    var discovering by remember { mutableStateOf(false) }
+    var services by remember { mutableStateOf<List<SmbService>>(emptyList()) }
+    var discoveredHost by remember { mutableStateOf("") }
+    var resolving by remember { mutableStateOf(false) }
+    LaunchedEffect(discovering) {
+        if (discovering) {
+            services = emptyList()
+            try { withTimeoutOrNull(15000) { discoverSmb(context).collect { services = it } } }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { services = emptyList() }
+            finally { discovering = false }
+        }
+    }
     var pending by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     var transfer by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -278,6 +291,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 val fields = listOf("Server host or IP", "Share name", "Username", "Domain (optional)", "Password").map { label ->
                     EditText(context).apply { hint = label; setSingleLine(true) }
                 }
+                fields.first().setText(discoveredHost)
                 fields.last().inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                 val layout = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; fields.forEach { addView(it) } }
                 AlertDialog.Builder(context).setTitle("Connect SMB").setView(layout).setNegativeButton("Cancel", null)
@@ -336,6 +350,26 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     finally { credentialBusy = false }
                 }
             }) { Text("Forget saved") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = transfer == null && !resolving, onClick = { discovering = !discovering }) {
+                Text(if (discovering) "Stop discovery" else "Find SMB servers")
+            }
+            if (discoveredHost.isNotEmpty()) Text("Selected: $discoveredHost · use Connect")
+        }
+        if (services.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 120.dp)) {
+            items(services, key = { it.name }) { service ->
+                Button(enabled = !resolving && transfer == null, onClick = {
+                    resolving = true
+                    scope.launch {
+                        try { discoveredHost = withTimeout(10000) { resolveSmb(context, service) }; status = "Server selected; enter share and credentials" }
+                        catch (e: TimeoutCancellationException) { status = "Server resolution timed out" }
+                        catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { status = "Server resolution failed" }
+                        finally { resolving = false }
+                    }
+                }) { Text(service.name) }
+            }
         }
         Text(path.joinToString(" / ").ifEmpty { server?.share ?: "Enter server credentials" })
         status?.let { Text(it) }

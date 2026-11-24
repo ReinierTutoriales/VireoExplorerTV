@@ -47,3 +47,5 @@ CI 45431467789 passed. Added SMB folder creation and non-replacing rename for fi
 CI 45432402957 passed. Added explicitly confirmed permanent SMB deletion, metadata revalidation and nonrecursive empty-directory deletion. Path-based revalidation is not atomic against concurrent remote modifications. New CI and real server validation pending.
 
 CI 45433047121 passed. Added explicit opt-in single saved SMB connection encrypted with AndroidKeyStore AES-256/GCM, fresh IV per save, encrypted preferences, manual restore and forget. No automatic connection or new permissions. Hardware-backed key availability varies; transient JVM strings cannot be guaranteed erased. New CI and runtime Keystore validation pending.
+
+CI 45433634053 passed. Added user-triggered 15-second DNS-SD SMB discovery via NsdManager, bounded service list, manual resolution and connection form prefill. Legacy resolveService compatibility path retained for API 24; modern callback migration pending. Only advertised _smb._tcp services on port 445 supported; manual host remains available. No new permissions or dependencies. New CI and runtime validation pending.
