@@ -31,25 +31,7 @@ import java.util.concurrent.TimeUnit
 private class SmbEndpoint(val host: String, val share: String, val user: String, val domain: String, val password: CharArray)
 private data class SmbEntry(val name: String, val directory: Boolean, val bytes: Long)
 
-private suspend fun listSmb(endpoint: SmbEndpoint, path: String): List<SmbEntry> = withContext(Dispatchers.IO) {
-    val config = SmbConfig.builder().withTimeout(10, TimeUnit.SECONDS)
-        .withSoTimeout(10, TimeUnit.SECONDS).withSigningRequired(true).build()
-    SMBClient(config).use { client ->
-        client.connect(endpoint.host).use { connection ->
-            val password = endpoint.password.copyOf()
-            val session = try { connection.authenticate(AuthenticationContext(endpoint.user, password, endpoint.domain)) }
-            finally { password.fill('\u0000') }
-            (session.connectShare(endpoint.share) as DiskShare).use { share ->
-                share.list(path).asSequence().filter { it.fileName != "." && it.fileName != ".." }
-                    .take(5001).map { SmbEntry(it.fileName, it.fileAttributes and 16L != 0L, it.endOfFile) }
-                    .toList().also { check(it.size <= 5000) { "Directory limit exceeded" } }
-                    .sortedWith(compareByDescending<SmbEntry> { it.directory }.thenBy { it.name.lowercase(java.util.Locale.ROOT) })
-            }
-        }
-    }
-}
-
-private suspend fun downloadSmb(endpoint: SmbEndpoint, path: String, expected: Long, resolver: android.content.ContentResolver, target: android.net.Uri) = withContext(Dispatchers.IO) {
+private suspend fun <T> withSmbShare(endpoint: SmbEndpoint, operation: suspend (DiskShare) -> T): T = withContext(Dispatchers.IO) {
     val config = SmbConfig.builder().withTimeout(10, TimeUnit.SECONDS)
         .withSoTimeout(10, TimeUnit.SECONDS).withSigningRequired(true).build()
     val password = endpoint.password.copyOf()
@@ -57,30 +39,55 @@ private suspend fun downloadSmb(endpoint: SmbEndpoint, path: String, expected: L
         SMBClient(config).use { client ->
             client.connect(endpoint.host).use { connection ->
                 val session = connection.authenticate(AuthenticationContext(endpoint.user, password, endpoint.domain))
-                (session.connectShare(endpoint.share) as DiskShare).use { share ->
-                    share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
-                        EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN,
-                        EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
-                        file.inputStream.use { input ->
-                            checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
-                                val buffer = ByteArray(128 * 1024)
-                                var total = 0L
-                                while (true) {
-                                    coroutineContext.ensureActive()
-                                    val n = input.read(buffer)
-                                    if (n < 0) break
-                                    total += n
-                                    check(total <= expected) { "Remote file changed" }
-                                    output.write(buffer, 0, n)
-                                }
-                                check(total == expected) { "Incomplete transfer" }
-                            }
-                        }
-                    }
-                }
+                (session.connectShare(endpoint.share) as DiskShare).use { share -> operation(share) }
             }
         }
     } finally { password.fill('\u0000') }
+}
+
+private suspend fun listSmb(endpoint: SmbEndpoint, path: String): List<SmbEntry> = withSmbShare(endpoint) { share ->
+    share.list(path).asSequence().filter { it.fileName != "." && it.fileName != ".." }
+        .take(5001).map { SmbEntry(it.fileName, it.fileAttributes and 16L != 0L, it.endOfFile) }
+        .toList().also { check(it.size <= 5000) { "Directory limit exceeded" } }
+        .sortedWith(compareByDescending<SmbEntry> { it.directory }.thenBy { it.name.lowercase(java.util.Locale.ROOT) })
+}
+
+private suspend fun downloadSmb(endpoint: SmbEndpoint, path: String, expected: Long, resolver: android.content.ContentResolver, target: android.net.Uri) = withSmbShare(endpoint) { share ->
+    require(expected >= 0)
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(128 * 1024)
+    share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
+        EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN,
+        EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
+        file.inputStream.use { input ->
+            checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
+                var total = 0L
+                while (true) {
+                    kotlin.coroutines.coroutineContext.ensureActive()
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    total += n
+                    check(total <= expected) { "Remote file changed" }
+                    output.write(buffer, 0, n)
+                    digest.update(buffer, 0, n)
+                }
+                check(total == expected) { "Incomplete transfer" }
+            }
+        }
+    }
+    val sourceHash = digest.digest()
+    var verified = 0L
+    checkNotNull(resolver.openInputStream(target)).use { input ->
+        while (true) {
+            kotlin.coroutines.coroutineContext.ensureActive()
+            val n = input.read(buffer)
+            if (n < 0) break
+            verified += n
+            check(verified <= expected) { "Destination size mismatch" }
+            digest.update(buffer, 0, n)
+        }
+    }
+    check(verified == expected && sourceHash.contentEquals(digest.digest())) { "Destination verification failed" }
 }
 
 @Composable
@@ -104,7 +111,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             transfer = scope.launch {
                 try {
                     downloadSmb(server, request.first, request.second.bytes, context.contentResolver, uri)
-                    status = "Download completed"
+                    status = "Download completed and verified (SHA-256)"
                 } catch (e: CancellationException) {
                     status = "Download cancelled; destination may contain partial data"
                     throw e
