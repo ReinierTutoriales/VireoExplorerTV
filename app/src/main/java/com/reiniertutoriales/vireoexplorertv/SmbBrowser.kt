@@ -54,40 +54,15 @@ private suspend fun listSmb(endpoint: SmbEndpoint, path: String): List<SmbEntry>
 
 private suspend fun downloadSmb(endpoint: SmbEndpoint, path: String, expected: Long, resolver: android.content.ContentResolver, target: android.net.Uri) = withSmbShare(endpoint) { share ->
     require(expected >= 0)
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    val buffer = ByteArray(128 * 1024)
-    share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
+    val source = share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
         EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN,
         EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
         file.inputStream.use { input ->
-            checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
-                var total = 0L
-                while (true) {
-                    kotlin.coroutines.coroutineContext.ensureActive()
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    total += n
-                    check(total <= expected) { "Remote file changed" }
-                    output.write(buffer, 0, n)
-                    digest.update(buffer, 0, n)
-                }
-                check(total == expected) { "Incomplete transfer" }
-            }
+            checkNotNull(resolver.openOutputStream(target, "w")).use { output -> transferDigest(input, output, expected) }
         }
     }
-    val sourceHash = digest.digest()
-    var verified = 0L
-    checkNotNull(resolver.openInputStream(target)).use { input ->
-        while (true) {
-            kotlin.coroutines.coroutineContext.ensureActive()
-            val n = input.read(buffer)
-            if (n < 0) break
-            verified += n
-            check(verified <= expected) { "Destination size mismatch" }
-            digest.update(buffer, 0, n)
-        }
-    }
-    check(verified == expected && sourceHash.contentEquals(digest.digest())) { "Destination verification failed" }
+    val verified = checkNotNull(resolver.openInputStream(target)).use { transferDigest(it, expected = expected) }
+    check(source.matches(verified)) { "Destination verification failed" }
 }
 
 private suspend fun uploadSmb(endpoint: SmbEndpoint, folder: List<String>, resolver: android.content.ContentResolver, source: android.net.Uri) = withSmbShare(endpoint) { share ->
@@ -97,42 +72,19 @@ private suspend fun uploadSmb(endpoint: SmbEndpoint, folder: List<String>, resol
     }
     require(validSmbName(name))
     val path = (folder + name).joinToString("\\")
-    val buffer = ByteArray(128 * 1024)
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    var total = 0L
-    share.openFile(path, EnumSet.of(AccessMask.GENERIC_WRITE), null,
+    val original = share.openFile(path, EnumSet.of(AccessMask.GENERIC_WRITE), null,
         EnumSet.noneOf(SMB2ShareAccess::class.java), SMB2CreateDisposition.FILE_CREATE,
         EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
         checkNotNull(resolver.openInputStream(source)).use { input ->
-            file.outputStream.use { output ->
-                while (true) {
-                    kotlin.coroutines.coroutineContext.ensureActive()
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    output.write(buffer, 0, n)
-                    digest.update(buffer, 0, n)
-                    total += n
-                }
-            }
+            file.outputStream.use { output -> transferDigest(input, output) }
         }
     }
-    val expected = digest.digest()
-    var verified = 0L
-    share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
+    val verified = share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
         EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN,
         EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
-        file.inputStream.use { input ->
-            while (true) {
-                kotlin.coroutines.coroutineContext.ensureActive()
-                val n = input.read(buffer)
-                if (n < 0) break
-                verified += n
-                check(verified <= total)
-                digest.update(buffer, 0, n)
-            }
-        }
+        file.inputStream.use { transferDigest(it, expected = original.bytes) }
     }
-    check(verified == total && expected.contentEquals(digest.digest())) { "Remote verification failed" }
+    check(original.matches(verified)) { "Remote verification failed" }
 }
 
 internal fun validSmbName(name: String): Boolean =

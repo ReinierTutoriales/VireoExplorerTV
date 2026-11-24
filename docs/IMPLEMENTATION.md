@@ -51,3 +51,5 @@ CI 45433047121 passed. Added explicit opt-in single saved SMB connection encrypt
 CI 45433634053 passed. Added user-triggered 15-second DNS-SD SMB discovery via NsdManager, bounded service list, manual resolution and connection form prefill. Legacy resolveService compatibility path retained for API 24; modern callback migration pending. Only advertised _smb._tcp services on port 445 supported; manual host remains available. No new permissions or dependencies. New CI and runtime validation pending.
 
 CI 45434197304 passed. DNS-SD now retains original service information and uses ServiceInfoCallback on API 34+, with cancellation unregister and single completion; legacy resolution retained below API 34. New CI and network integration pending.
+
+CI 45434880043 passed. Extracted reusable streaming SHA-256 transfer primitive and migrated SMB upload/download to it. Added unit tests for multi-buffer copy, hash mismatch and size mismatch. Local SAF migration remains pending. New CI pending.
