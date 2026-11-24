@@ -28,3 +28,6 @@ Read [docs/ENGINES.md](docs/ENGINES.md) before storage, media, network, cleaner 
 
 ## Native UI performance contract
 Follow [UI specification](docs/UI.md) (repository-root path). Prefer official TV Material and Compose Foundation primitives, native focus and vector resources; no redundant UI stacks. Measure startup, frame timing, memory and focus regressions before claiming improvements.
+
+## Integrated player
+Follow [docs/PLAYER.md](docs/PLAYER.md) for all playback changes. Hardware-first Media3, native TV controls, subtitle support and lifecycle correctness are mandatory.
