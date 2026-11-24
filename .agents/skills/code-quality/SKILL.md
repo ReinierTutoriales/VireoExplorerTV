@@ -12,3 +12,6 @@ description: Audit correctness, performance, security, accessibility and obsolet
 
 ## Integrated project requirements
 Audit shared provider boundaries, lifecycle, bounded memory/IO, cancellation, native UI focus, decoder capability, permission scope, credentials and destructive operations. Remove dead code only after consumer checks. Reject redundant stacks and unmeasured performance claims.
+
+## Application management and intelligent cleanup
+Follow docs/APP_MANAGEMENT.md as a binding contract. Include scoped installed-app inventory, system/user distinction, optional authorized storage and usage statistics, official app settings for cache/data/uninstall/disable, consent-based APK installation, accessible temporary/incomplete files, residual APKs, empty folders, own inactive cache and duplicate review. Never equate candidate names or age with junk. Protect system/private data, revalidate before deletion, preserve a duplicate, report actual reclaimed bytes and partial failures. No root, hidden APIs, forced process killing or fake RAM optimization. Verify permission eligibility and device capability; test revoked access, active files and unavailable settings. Keep UI native TV and operations bounded, cancellable and off the main thread. Implementation status belongs in IMPLEMENTATION.md.

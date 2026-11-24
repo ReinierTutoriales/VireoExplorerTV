@@ -12,3 +12,6 @@ description: Regression coverage and honest validation for Android TV.
 
 ## Integrated project requirements
 Test D-pad repeat/focus restoration, API boundaries, provider revocation/removal, transfer integrity/cancellation, duplicate preservation, malformed archives/media/images, subtitle tracks, network loss, memory pressure and lifecycle. Measure startup/frame timing/memory before optimization claims; separate CI and physical evidence.
+
+## Application management and intelligent cleanup
+Follow docs/APP_MANAGEMENT.md as a binding contract. Include scoped installed-app inventory, system/user distinction, optional authorized storage and usage statistics, official app settings for cache/data/uninstall/disable, consent-based APK installation, accessible temporary/incomplete files, residual APKs, empty folders, own inactive cache and duplicate review. Never equate candidate names or age with junk. Protect system/private data, revalidate before deletion, preserve a duplicate, report actual reclaimed bytes and partial failures. No root, hidden APIs, forced process killing or fake RAM optimization. Verify permission eligibility and device capability; test revoked access, active files and unavailable settings. Keep UI native TV and operations bounded, cancellable and off the main thread. Implementation status belongs in IMPLEMENTATION.md.
