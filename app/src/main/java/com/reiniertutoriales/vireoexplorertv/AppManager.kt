@@ -27,6 +27,7 @@ internal fun AppManager(onClose: () -> Unit) {
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var cleaning by remember { mutableStateOf(false) }
     var stats by remember { mutableStateOf<String?>(null) }
     var statsJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
@@ -60,6 +61,22 @@ internal fun AppManager(onClose: () -> Unit) {
             Button(onClick = { revision++ }) { Text("Refresh") }
         }
         Button(onClick = { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Authorize usage statistics") }
+        Button(enabled = !cleaning, onClick = {
+            android.app.AlertDialog.Builder(context).setTitle("Clear explorer analysis cache?")
+                .setMessage("Only the explorer's dedicated analysis cache is affected.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear") { _, _ ->
+                    cleaning = true
+                    scope.launch {
+                        try {
+                            val bytes = withContext(Dispatchers.IO) { clearAnalysisCache(context.cacheDir) }
+                            stats = "Removed $bytes bytes from analysis cache"
+                        } catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { error = "Cache cleanup incomplete" }
+                        finally { cleaning = false }
+                    }
+                }.show()
+        }) { Text("Clear analysis cache") }
         stats?.let { Text(it) }
         Text("Visible applications only. Clear cache, clear data and uninstall through Android settings.")
         error?.let { Text(it) }
@@ -91,4 +108,18 @@ private fun applicationStorage(context: android.content.Context, pkg: String): S
     val manager = context.getSystemService(android.app.usage.StorageStatsManager::class.java)
     val stats = manager.queryStatsForPackage(info.storageUuid, pkg, android.os.Process.myUserHandle())
     return "$pkg: app ${stats.appBytes / 1048576} MiB · data ${stats.dataBytes / 1048576} MiB (includes cache) · cache ${stats.cacheBytes / 1048576} MiB"
+}
+
+// Reserved exclusively for inactive analysis artifacts; never clear playback or transfer files.
+private fun clearAnalysisCache(cache: java.io.File): Long {
+    val directory = java.io.File(cache, "analysis-inactive")
+    if (!directory.exists()) return 0
+    check(directory.canonicalFile == directory.absoluteFile)
+    var removed = 0L
+    for (file in directory.listFiles() ?: error("Cache unavailable")) {
+        if (!file.isFile || file.canonicalFile != file.absoluteFile) continue
+        val size = file.length()
+        if (file.delete()) removed += size else error("Cache cleanup incomplete")
+    }
+    return removed
 }
