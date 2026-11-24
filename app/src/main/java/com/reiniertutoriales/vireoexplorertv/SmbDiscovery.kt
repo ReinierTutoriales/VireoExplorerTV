@@ -6,7 +6,7 @@ import android.net.nsd.NsdServiceInfo
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 
-internal data class SmbService(val name: String, val type: String)
+internal data class SmbService(val name: String, val info: NsdServiceInfo)
 internal fun discoverSmb(context: Context) = callbackFlow<List<SmbService>> {
     val manager = context.getSystemService(NsdManager::class.java)
     val services = linkedMapOf<String, SmbService>()
@@ -17,7 +17,7 @@ internal fun discoverSmb(context: Context) = callbackFlow<List<SmbService>> {
         override fun onStopDiscoveryFailed(type: String, error: Int) { close() }
         override fun onServiceFound(info: NsdServiceInfo) {
             synchronized(services) {
-                if (services.size < 100) services[info.serviceName] = SmbService(info.serviceName, info.serviceType)
+                if (services.size < 100) services[info.serviceName] = SmbService(info.serviceName, info)
                 trySend(services.values.toList())
             }
         }
@@ -33,7 +33,11 @@ internal fun discoverSmb(context: Context) = callbackFlow<List<SmbService>> {
 internal suspend fun resolveSmb(context: Context, service: SmbService): String =
     kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
         val manager = context.getSystemService(NsdManager::class.java)
-        val info = NsdServiceInfo().apply { serviceName = service.name; serviceType = service.type }
+        val info = service.info
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            resolveModern(manager, info, continuation)
+            return@suspendCancellableCoroutine
+        }
         manager.resolveService(info, object : NsdManager.ResolveListener {
             override fun onResolveFailed(info: NsdServiceInfo, error: Int) {
                 if (continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException("Resolve failed: $error")))
@@ -45,3 +49,30 @@ internal suspend fun resolveSmb(context: Context, service: SmbService): String =
             }
         })
     }
+
+@android.annotation.TargetApi(34)
+private fun resolveModern(manager: NsdManager, info: NsdServiceInfo, continuation: kotlinx.coroutines.CancellableContinuation<String>) {
+    val finished = java.util.concurrent.atomic.AtomicBoolean(false)
+    val callback = object : NsdManager.ServiceInfoCallback {
+        override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {
+            if (finished.compareAndSet(false, true)) continuation.resumeWith(Result.failure(IllegalStateException("Resolution registration failed: $errorCode")))
+        }
+        override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
+            val host = serviceInfo.hostAddresses.firstOrNull { it is java.net.Inet4Address }?.hostAddress
+                ?: serviceInfo.hostAddresses.firstOrNull()?.hostAddress
+            if (host != null && serviceInfo.port == 445) {
+                if (finished.compareAndSet(false, true)) {
+                    runCatching { manager.unregisterServiceInfoCallback(this) }
+                    continuation.resumeWith(Result.success(host))
+                }
+            }
+        }
+        override fun onServiceLost() {
+            if (finished.compareAndSet(false, true)) continuation.resumeWith(Result.failure(IllegalStateException("Service lost")))
+            runCatching { manager.unregisterServiceInfoCallback(this) }
+        }
+        override fun onServiceInfoCallbackUnregistered() {}
+    }
+    manager.registerServiceInfoCallback(info, java.util.concurrent.Executor { it.run() }, callback)
+    continuation.invokeOnCancellation { finished.set(true); runCatching { manager.unregisterServiceInfoCallback(callback) } }
+}
