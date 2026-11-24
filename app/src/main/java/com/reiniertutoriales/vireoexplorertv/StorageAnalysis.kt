@@ -22,6 +22,16 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
     var mode by remember { mutableIntStateOf(0) }
     var revision by remember { mutableIntStateOf(0) }
     var deleting by remember { mutableStateOf(false) }
+    var removed by remember(root) { mutableIntStateOf(0) }
+    var removedBytes by remember(root) { mutableLongStateOf(0L) }
+    var unknownSizes by remember(root) { mutableIntStateOf(0) }
+    var failed by remember(root) { mutableIntStateOf(0) }
+    fun recordRemoval(entry: Entry) {
+        removed++
+        if (!entry.directory) {
+            if (entry.size >= 0) removedBytes += entry.size else unknownSizes++
+        }
+    }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     BackHandler { if (!deleting) onClose() }
@@ -35,9 +45,14 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
         Text("Storage analysis")
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(enabled = !deleting, onClick = onClose) { Text("Back / Cancel") }
-            Button(enabled = result != null, onClick = { mode = 0 }) { Text("Largest files") }
+            Button(enabled = result != null && !deleting, onClick = { mode = 0 }) { Text("Largest files") }
             Button(enabled = result != null, onClick = { mode = 1 }) { Text("Possible duplicates") }
             Button(enabled = result != null && !deleting, onClick = { mode = 2 }) { Text("Cleanup review") }
+        }
+        if (removed > 0 || failed > 0) {
+            Text("Session: $removed entries deleted · $failed failed · " + android.text.format.Formatter.formatFileSize(context, removedBytes) + " known deleted file sizes")
+            if (unknownSizes > 0) Text("$unknownSizes deleted files with unknown size")
+            Text("Deleted file sizes do not guarantee equivalent physical space recovered.")
         }
         error?.let { Text(it) }
         val report = result
@@ -55,9 +70,9 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
                                 .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
                                     deleting = true
                                     scope.launch {
-                                        try { storage.cleanCandidate(entry); error = null }
+                                        try { storage.cleanCandidate(entry); recordRemoval(entry); error = null }
                                         catch (e: CancellationException) { throw e }
-                                        catch (e: Exception) { error = e.localizedMessage ?: "Deletion failed" }
+                                        catch (e: Exception) { failed++; error = e.localizedMessage ?: "Deletion failed" }
                                         finally { deleting = false; revision++ }
                                     }
                                 }.show()
@@ -81,9 +96,9 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
                                     .setPositiveButton("Delete") { _, _ ->
                                         deleting = true
                                         scope.launch {
-                                            try { storage.removeDuplicate(entry, keep); error = null }
+                                            try { storage.removeDuplicate(entry, keep); recordRemoval(entry); error = null }
                                             catch (e: CancellationException) { throw e }
-                                            catch (e: Exception) { error = e.localizedMessage ?: "Duplicate deletion failed" }
+                                            catch (e: Exception) { failed++; error = e.localizedMessage ?: "Duplicate deletion failed" }
                                             finally { deleting = false; revision++ }
                                         }
                                     }.show()
