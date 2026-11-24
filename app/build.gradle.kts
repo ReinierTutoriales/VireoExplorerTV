@@ -8,6 +8,8 @@ android {
  buildTypes { release { isMinifyEnabled = true; isShrinkResources = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt")) } }
 }
 dependencies {
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.viewmodel.savedstate)
     implementation(libs.smbj)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)

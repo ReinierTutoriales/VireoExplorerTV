@@ -20,6 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.app.AlertDialog
 import android.widget.EditText
 import android.text.InputType
@@ -46,26 +49,23 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) { model.error = e.localizedMessage ?: "Permission unavailable" }
         }
         var writableRoots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()) }
-        DisposableEffect(Unit) {
-            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                    val grants = contentResolver.persistedUriPermissions
-                    model.roots = grants.filter { it.isReadPermission }.map { it.uri }
-                    writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
-                    if (model.path.isNotEmpty() && model.roots.none { storage.root(it) == model.path.first().first }) {
-                        model.path = emptyList(); model.selected = null; model.viewing = null; model.scanOpen = false
-                        model.error = "Storage access revoked"
-                    }
-                }
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+            val grants = contentResolver.persistedUriPermissions
+            model.roots = grants.filter { it.isReadPermission }.map { it.uri }
+            writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
+            if (model.path.isNotEmpty() && model.roots.none { storage.root(it) == model.path.first().first }) {
+                model.path = emptyList()
+                model.selected = null
+                model.viewing = null
+                model.scanOpen = false
+                model.error = "Storage access revoked"
             }
-            lifecycle.addObserver(observer)
-            onDispose { lifecycle.removeObserver(observer) }
         }
-        LaunchedEffect(model.roots) { writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet() }
-        var volumes by remember { mutableStateOf<List<VolumeInfo>>(emptyList()) }
-        LaunchedEffect(Unit) {
-            observeVolumes(this@MainActivity).collect { volumes = it }
+        LaunchedEffect(model.roots) {
+            writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()
         }
+        val volumeFlow = remember { observeVolumes(applicationContext) }
+        val volumes by volumeFlow.collectAsStateWithLifecycle(initialValue = emptyList())
         val parent = model.path.lastOrNull()?.first
         val writable = model.roots.any { it in writableRoots && storage.root(it) == model.path.firstOrNull()?.first }
         LaunchedEffect(parent, model.revision) { model.load(parent) }
@@ -137,7 +137,7 @@ class MainActivity : ComponentActivity() {
             }
             if (model.transferJob != null) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val bytes by model.progress.collectAsState()
+                    val bytes by model.progress.collectAsStateWithLifecycle()
                     Text("${bytes / 1024} KiB")
                     Button(onClick = { model.transferJob?.cancel() }) { Text("Cancel transfer") }
                 }
