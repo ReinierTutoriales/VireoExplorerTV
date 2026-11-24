@@ -16,6 +16,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
@@ -36,6 +40,9 @@ class MainActivity : ComponentActivity() {
 
     @Composable private fun Explorer() {
         val storage = model.storage
+        var gridView by rememberSaveable { mutableStateOf(false) }
+        var sortIndex by rememberSaveable { mutableIntStateOf(0) }
+        val sortLabels = listOf("Name A–Z", "Name Z–A", "Largest first", "Smallest first")
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val uri = result.data?.data
             if (result.resultCode == android.app.Activity.RESULT_OK && uri != null) try {
@@ -107,6 +114,8 @@ class MainActivity : ComponentActivity() {
                 if(parent != null) {
                     Button(enabled = !model.mutating, onClick = { model.path = model.path.dropLast(1) }) { Text("Back") }
                     Button(enabled = !model.mutating, onClick = { model.revision++ }) { Text("Refresh") }
+                    Button(onClick = { gridView = !gridView }) { Text(if (gridView) "List" else "Grid") }
+                    Button(onClick = { sortIndex = (sortIndex + 1) % sortLabels.size }) { Text(sortLabels[sortIndex]) }
                     Button(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
                     Button(enabled = !model.mutating, onClick = { searchDialog(model.search) { model.search = it } }) { Text("Search") }
                     Button(enabled = !model.mutating && !model.busy && model.selected == null, onClick = { model.multi = !model.multi; model.marked = emptySet() }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
@@ -194,13 +203,43 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(model.entries.filter { it.name.contains(model.search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
-                        Button(enabled = !model.mutating, onClick = { if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri else model.selected = entry }, modifier = Modifier.fillMaxWidth()) {
-                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                FileThumbnail(entry, model.revision)
-                                Text((if (model.multi) { if (entry.uri in model.marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name, modifier = Modifier.weight(1f), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                if (!entry.directory && entry.size >= 0) Text(android.text.format.Formatter.formatFileSize(this@MainActivity, entry.size))
+                val visible = remember(model.entries, model.search, sortIndex) {
+                    val names = compareBy<Entry> { it.name.lowercase(java.util.Locale.ROOT) }.thenBy { it.name }
+                    val order = when (sortIndex) {
+                        1 -> names.reversed()
+                        2 -> compareByDescending<Entry> { it.size }.then(names)
+                        3 -> compareBy<Entry> { if (it.size < 0) Long.MAX_VALUE else it.size }.then(names)
+                        else -> names
+                    }
+                    model.entries.filter { it.name.contains(model.search, ignoreCase = true) }
+                        .sortedWith(compareBy<Entry> { !it.directory }.then(order))
+                }
+                val select: (Entry) -> Unit = { entry ->
+                    if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri
+                    else model.selected = entry
+                }
+                if (gridView) {
+                    LazyVerticalGrid(columns = GridCells.Adaptive(180.dp), modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(visible, key = { it.uri.toString() }) { entry ->
+                            Button(enabled = !model.mutating, onClick = { select(entry) }, modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.fillMaxWidth().heightIn(min = 88.dp), verticalArrangement = Arrangement.Center) {
+                                    FileThumbnail(entry, model.revision)
+                                    Text((if (model.multi && entry.uri in model.marked) "✓ " else "") + (if (entry.directory) "▸ " else "") + entry.name,
+                                        maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(visible, key = { it.uri.toString() }) { entry ->
+                            Button(enabled = !model.mutating, onClick = { select(entry) }, modifier = Modifier.fillMaxWidth()) {
+                                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    FileThumbnail(entry, model.revision)
+                                    Text((if (model.multi) { if (entry.uri in model.marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name, modifier = Modifier.weight(1f), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    if (!entry.directory && entry.size >= 0) Text(android.text.format.Formatter.formatFileSize(this@MainActivity, entry.size))
+                                }
                             }
                         }
                     }
