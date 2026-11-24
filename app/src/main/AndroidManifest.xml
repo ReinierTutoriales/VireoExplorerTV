@@ -1,5 +1,7 @@
 <manifest xmlns:tools="http://schemas.android.com/tools" xmlns:android="http://schemas.android.com/apk/res/android">
 <uses-permission android:name="android.permission.INTERNET"/>
+<!-- Playback is foreground-only and keeps the visible view awake. -->
+<uses-permission android:name="android.permission.WAKE_LOCK" tools:node="remove"/>
 <uses-feature android:name="android.software.leanback" android:required="true"/>
 <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
 <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />

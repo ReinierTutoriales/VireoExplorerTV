@@ -115,3 +115,32 @@ CI 45464087752 passed. SMB Media3 data source now resolves each DataSpec URI aga
 CI 45465265655 passed. Music presentation uses embedded Media3 artwork and metadata, sampled BitmapFactory decode on IO, 8 MiB encoded artwork acceptance cap and 1024-pixel sampled dimension target, AMOLED placeholder and large title/artist/album. No external artwork lookup or new dependencies. New CI and TV layout validation pending.
 
 CI 45466264115 passed. Shared media routing hints for generic MIME types in local/USB and SMB browser, preserving explicit media MIME. Unit tests cover generic MKV, FLAC, AVIF, reported audio MP4 and ZIP. Routing does not imply decoder support. New CI pending.
+
+## Android TV stability audit (2026-11-24)
+
+Base: `767eab3c3d0fb70491cb4f2cdae4b9b5953c1749`. [GitHub Actions 45480913362](https://github.com/ReinierTutoriales/VireoExplorerTV/actions/runs/45480913362) passed Debug build, unit tests and lint. The workflow had no TV runtime test and did not build Release. The local workflow change adds `assembleRelease`; it is verified locally and has not run on GitHub.
+
+- Theme: the startup capture exposed dark body text on the AMOLED background. A non-interactive TV Material Surface now supplies the content color. The home screen was visually checked at 720p and 1080p. This verifies legibility, and visual alignment with the approved product design is pending.
+- Explorer: OK opens folders and media. Holding OK opens file actions. The list and grid use stable document keys and attempt to restore focus to the last opened item. Home keeps storage, favorites and recent folders in a scrollable list.
+- Permissions: the Android TV API 36 image resolves the folder picker to the platform's TV stub and returns without a tree grant. Home now reports that outcome and offers the existing SMB route. Local/USB browsing on this image remains unavailable through SAF. The merged manifest removes the unused Media3 wake lock permission. Android TV-specific system settings still vary by firmware.
+- SMB: Back moves to the parent directory, disconnects at the root of a share, then returns to the app home. The connection dialog keeps invalid entries visible for correction. Discovery, connection, and empty-folder states have distinct messages.
+- Media and cleanup: playback errors offer a retry, subtitle errors keep their own message, and the image viewer has a reachable Back action during decoding or failure. Storage analysis displays read-only access and keeps destructive actions disabled without a writable grant.
+- Release: R8 previously stopped on JVM-only Kerberos references in SMBJ and optional expression filters in MBassador. The new rules are scoped to those missing types and preserve SMBJ event handlers used by reflection. See [SMBJ Android authenticator selection](https://raw.githubusercontent.com/hierynomus/smbj/v0.15.0/src/main/java/com/hierynomus/smbj/SmbConfig.java) and [SMBJ event bus](https://raw.githubusercontent.com/hierynomus/smbj/v0.15.0/src/main/java/com/hierynomus/smbj/event/SMBEventBus.java). Release remains unsigned.
+
+Checks: `gradle assembleDebug testDebugUnitTest lintDebug assembleRelease` with SDK platform 37.2. The 17 unit tests passed. Lint reported 14 warnings and zero errors. The TV smoke script passed at 720p and 1080p on Android TV API 36, including the picker fallback. The [TV smoke script](../tests/tv_smoke.py) runs against an installed debug APK and checks cold start, initial focus, D-pad and Back across the SMB dialog and Apps & storage. Use `--expect-picker-stub` to also check the fallback on an image with the stub. A loopback connection to a closed SMB port displayed the connection error. Back disconnected and returned to the network screen, and the next Back returned home. SMB streaming and transfers, sustained playback, granted local/USB access, ZIP operations and actual cleanup deletions require integration fixtures. No physical-TV or performance results are recorded.
+
+
+## Explorer home redesign (2026-11-24)
+
+The supplied reference defines the fixed left navigation and the storage and category cards. The implementation uses TV Material focusable surfaces and list items, plus individually imported Google Material Symbols Rounded vectors. New home labels are available in English and Spanish. Focus starts on Internal storage and re-enters the content or the selected navigation item after a page change.
+
+Internal and USB use existing Android folder grants and volume entry points. Search and categories operate in a chosen accessible folder and keep subfolders navigable. ZIP is the supported archive category. The transfer page represents the local file selection and operation state available to the explorer. SMB and the apps/cleanup manager route to their existing screens.
+
+The local Debug and Release builds passed, along with 17 unit tests and lint with zero errors. The D-pad smoke test passed at 720p and 1080p on the Android TV API 36 image. Both resolutions were visually checked in Spanish. This image provides a picker stub, so the smoke test verifies the missing-picker feedback and the category's folder-selection entry rather than granted local file browsing.
+
+
+## Explorer and playback interaction refinement (2026-11-24)
+
+Folder navigation separates the abbreviated path, search, and secondary tools. The file list and grid use native TV Material selection instead of prefix symbols. Refresh keeps the last listing in place during the query and revalidates the active selection. A failed read clears the stale listing. The free-space query now runs when folder tools are visible.
+
+SMB uses file names and type icons as the main entry points for browsing and playback. Media downloads and file operations remain separate controls. Player transport and format controls have separate rows that wrap with the available width. Progress polling pauses when playback controls are hidden. No performance measurements are recorded for these changes.

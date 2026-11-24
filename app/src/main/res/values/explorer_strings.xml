@@ -1,0 +1,54 @@
+<resources>
+    <string name="explorer_home">Home</string>
+    <string name="explorer_files">Files</string>
+    <string name="explorer_network">Network</string>
+    <string name="explorer_cleaner">Cleaner</string>
+    <string name="explorer_transfers">Transfers</string>
+    <string name="explorer_favorites">Favorites</string>
+    <string name="explorer_search">Search files</string>
+    <string name="explorer_settings">Settings</string>
+    <string name="explorer_storage">Storage</string>
+    <string name="explorer_categories">Categories</string>
+    <string name="explorer_internal">Internal</string>
+    <string name="explorer_usb">USB</string>
+    <string name="explorer_local_network">Local network</string>
+    <string name="explorer_folders">Folders</string>
+    <string name="explorer_videos">Videos</string>
+    <string name="explorer_audio">Audio</string>
+    <string name="explorer_photos">Photos</string>
+    <string name="explorer_documents">Documents</string>
+    <string name="explorer_archives">ZIP archives</string>
+    <string name="explorer_apk">APK files</string>
+    <string name="explorer_add_folder">Add folder</string>
+    <string name="explorer_authorized">Authorized folders</string>
+    <string name="explorer_recent">Recent folders</string>
+    <string name="explorer_no_favorites">No favorite folders yet.</string>
+    <string name="explorer_no_transfer">No transfers in progress.</string>
+    <string name="explorer_usb_unavailable">No USB storage detected. Connect a drive and try again.</string>
+    <string name="explorer_category_scope">Choose an authorized folder to filter its contents.</string>
+    <string name="explorer_no_category_files">No files of this type in this folder.</string>
+    <string name="explorer_folder_access">Choose Add folder to allow access to local or USB files.</string>
+    <string name="explorer_remove_favorite">Remove favorite</string>
+    <string name="explorer_clear_recent">Clear recent</string>
+    <string name="explorer_clear_queue">Clear selection</string>
+    <string name="explorer_transfer_progress">%1$s transferred</string>
+    <string name="explorer_cancel_transfer">Cancel transfer</string>
+    <string name="explorer_grid">Grid view</string>
+    <string name="explorer_list">List view</string>
+    <string name="explorer_grid_active">Files are shown as cards</string>
+    <string name="explorer_list_active">Files are shown as rows</string>
+    <string name="explorer_sort_by">Sort by</string>
+    <string name="explorer_sort_name_ascending">Name A–Z</string>
+    <string name="explorer_sort_name_descending">Name Z–A</string>
+    <string name="explorer_sort_largest">Largest first</string>
+    <string name="explorer_sort_smallest">Smallest first</string>
+    <string name="explorer_clear_filter">Clear: %1$s</string>
+    <plurals name="explorer_copy_queue">
+        <item quantity="one">Copy selection: %1$d file</item>
+        <item quantity="other">Copy selection: %1$d files</item>
+    </plurals>
+    <plurals name="explorer_move_queue">
+        <item quantity="one">Move selection: %1$d file</item>
+        <item quantity="other">Move selection: %1$d files</item>
+    </plurals>
+</resources>

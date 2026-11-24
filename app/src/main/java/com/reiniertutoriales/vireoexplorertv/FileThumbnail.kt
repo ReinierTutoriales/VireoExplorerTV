@@ -20,7 +20,10 @@ import kotlinx.coroutines.CancellationException
 @Composable
 internal fun FileThumbnail(entry: Entry, revision: Int) {
     if (Build.VERSION.SDK_INT < 29 || entry.directory ||
-        entry.flags and DocumentsContract.Document.FLAG_SUPPORTS_THUMBNAIL == 0) return
+        entry.flags and DocumentsContract.Document.FLAG_SUPPORTS_THUMBNAIL == 0) {
+        FileTypeIcon(entry)
+        return
+    }
     val resolver = LocalContext.current.contentResolver
     var bitmap by remember(entry.uri, entry.size, revision) { mutableStateOf<Bitmap?>(null) }
     val scope = rememberCoroutineScope()
@@ -37,8 +40,15 @@ internal fun FileThumbnail(entry: Entry, revision: Int) {
         }
         onDispose { signal.cancel(); job.cancel() }
     }
-    bitmap?.let {
-        Image(bitmap = it.asImageBitmap(), contentDescription = null,
-            modifier = Modifier.size(80.dp, 48.dp), contentScale = ContentScale.Fit)
-    }
+    val image = bitmap
+    if (image == null) FileTypeIcon(entry)
+    else Image(bitmap = image.asImageBitmap(), contentDescription = null,
+        modifier = Modifier.size(80.dp, 48.dp), contentScale = ContentScale.Fit)
+}
+
+@Composable
+private fun FileTypeIcon(entry: Entry) {
+    val icon = if (entry.directory) R.drawable.symbol_folder
+    else FileCategory.entries.firstOrNull { it.matches(entry) }?.icon ?: R.drawable.symbol_description
+    ExplorerIcon(icon)
 }

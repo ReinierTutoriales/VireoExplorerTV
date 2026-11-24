@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -53,6 +56,8 @@ private suspend fun decode(resolver: ContentResolver, entry: Entry, width: Int, 
 
 @Composable
 internal fun ImageViewer(entry: Entry, resolver: ContentResolver, onClose: () -> Unit) {
+    val backFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { backFocus.requestFocus() }
     BackHandler(onBack = onClose)
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
@@ -70,7 +75,7 @@ internal fun ImageViewer(entry: Entry, resolver: ContentResolver, onClose: () ->
             catch (e: Exception) { error = e.localizedMessage ?: "Cannot decode image" }
         }
         Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(entry.name)
+            Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 val image = bitmap
                 if (image != null) Image(image.asImageBitmap(), entry.name,
@@ -79,7 +84,7 @@ internal fun ImageViewer(entry: Entry, resolver: ContentResolver, onClose: () ->
                 else Text(error ?: "Loading image…")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onClose) { Text("Back") }
+                Button(modifier = Modifier.focusRequester(backFocus), onClick = onClose) { Text("Back") }
                 Button(enabled = bitmap != null && zoom > 1f, onClick = { zoom = (zoom - .5f).coerceAtLeast(1f) }) { Text("Zoom −") }
                 Button(enabled = bitmap != null && zoom < 3f, onClick = { zoom = (zoom + .5f).coerceAtMost(3f) }) { Text("Zoom +") }
                 Button(enabled = bitmap != null, onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate") }
