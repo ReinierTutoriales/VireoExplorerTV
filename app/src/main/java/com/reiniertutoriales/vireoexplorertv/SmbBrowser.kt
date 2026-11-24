@@ -159,6 +159,22 @@ private suspend fun renameSmbEntry(endpoint: SmbEndpoint, folder: List<String>, 
     }
 }
 
+private suspend fun deleteSmbEntry(endpoint: SmbEndpoint, folder: List<String>, entry: SmbEntry) = withSmbShare(endpoint) { share ->
+    require(validSmbName(entry.name))
+    val parent = folder.joinToString("\\")
+    val current = share.list(parent).singleOrNull { it.fileName == entry.name }
+        ?: error("Remote item no longer exists")
+    check((current.fileAttributes and 16L != 0L) == entry.directory)
+    check(entry.directory || current.endOfFile == entry.bytes) { "Remote file changed" }
+    val target = (folder + entry.name).joinToString("\\")
+    if (entry.directory) {
+        check(share.list(target).none { it.fileName != "." && it.fileName != ".." }) { "Directory is not empty" }
+        share.rmdir(target, false)
+    } else {
+        share.rm(target)
+    }
+}
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun SmbBrowser(onClose: () -> Unit) {
@@ -308,6 +324,21 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     val folder = path.toList()
                     editName("Rename remote item", entry.name) { renameSmbEntry(active, folder, entry, it) }
                 }) { Text("Rename") }
+                Button(enabled = server != null && transfer == null && !loading, onClick = {
+                    val active = server ?: return@Button
+                    val folder = path.toList()
+                    AlertDialog.Builder(context).setTitle("Permanently delete remote item?")
+                        .setMessage(entry.name + if (entry.directory) "\nOnly empty folders can be deleted." else "\nThis cannot be undone.")
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Delete") { _, _ ->
+                            transfer = scope.launch {
+                                try { deleteSmbEntry(active, folder, entry); status = "Remote item deleted" }
+                                catch (e: CancellationException) { throw e }
+                                catch (_: Exception) { status = "Delete failed: item changed, folder not empty, access or connection" }
+                                finally { transfer = null; refresh++ }
+                            }
+                        }.show()
+                }) { Text("Delete") }
                 }
             }
         }
