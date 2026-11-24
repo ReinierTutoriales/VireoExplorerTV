@@ -25,3 +25,6 @@ Project-owned code, assets and documentation are proprietary, all rights reserve
 
 ## Engine specifications
 Read [docs/ENGINES.md](docs/ENGINES.md) before storage, media, network, cleaner or archive changes. Candidate libraries are not approved pins; verify compatibility, security, licensing and current stable releases before adoption.
+
+## Native UI performance contract
+Follow [UI specification](docs/UI.md) (repository-root path). Prefer official TV Material and Compose Foundation primitives, native focus and vector resources; no redundant UI stacks. Measure startup, frame timing, memory and focus regressions before claiming improvements.
