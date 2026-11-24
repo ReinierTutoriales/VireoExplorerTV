@@ -22,6 +22,7 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
     var mode by remember { mutableIntStateOf(0) }
     var revision by remember { mutableIntStateOf(0) }
     var deleting by remember { mutableStateOf(false) }
+    var selected by remember(root, revision) { mutableStateOf<Set<Uri>>(emptySet()) }
     var removed by remember(root) { mutableIntStateOf(0) }
     var removedBytes by remember(root) { mutableLongStateOf(0L) }
     var unknownSizes by remember(root) { mutableIntStateOf(0) }
@@ -61,23 +62,41 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
             Text("${report.count} files · ${report.bytes / 1048576} MiB (known sizes)")
             if (report.limited || report.failures > 0) Text("Partial analysis: scan limits or inaccessible files")
             if (mode == 2) {
-                Text("Review individually. Candidates may still be needed.")
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Select candidates individually. Files may still be needed.")
+                val targets = report.candidates.filter { it.uri in selected && it.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !deleting && targets.isNotEmpty(), onClick = {
+                        AlertDialog.Builder(context).setTitle("Permanently delete selected entries?")
+                            .setMessage("${targets.size} selected entries. Each will be checked again before deletion.")
+                            .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
+                                deleting = true
+                                scope.launch {
+                                    var batchFailures = 0
+                                    try {
+                                        for (entry in targets) {
+                                            try {
+                                                storage.cleanCandidate(entry)
+                                                recordRemoval(entry)
+                                            } catch (e: CancellationException) { throw e }
+                                            catch (_: Exception) { failed++; batchFailures++ }
+                                        }
+                                        error = if (batchFailures > 0) "$batchFailures selected entries could not be deleted" else null
+                                    } finally { deleting = false; revision++ }
+                                }
+                            }.show()
+                    }) { Text("Delete selected (${targets.size})") }
+                    Button(enabled = !deleting && selected.isNotEmpty(), onClick = { selected = emptySet() }) { Text("Clear selection") }
+                }
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(report.candidates, key = { it.uri.toString() }) { entry ->
                         Button(enabled = !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0, onClick = {
-                            AlertDialog.Builder(context).setTitle("Permanently delete?")
-                                .setMessage(entry.name + "\n" + (if (entry.directory) "Empty folder" else cleanupReason(entry.name)))
-                                .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
-                                    deleting = true
-                                    scope.launch {
-                                        try { storage.cleanCandidate(entry); recordRemoval(entry); error = null }
-                                        catch (e: CancellationException) { throw e }
-                                        catch (e: Exception) { failed++; error = e.localizedMessage ?: "Deletion failed" }
-                                        finally { deleting = false; revision++ }
-                                    }
-                                }.show()
+                            selected = if (entry.uri in selected) selected - entry.uri else selected + entry.uri
                         }, modifier = Modifier.fillMaxWidth()) {
-                            Column { Text(entry.name); Text(if (entry.directory) "Empty folder" else cleanupReason(entry.name).orEmpty()) }
+                            Column {
+                                Text((if (entry.uri in selected) "Selected: " else "Select: ") + entry.name)
+                                Text(if (entry.directory) "Empty folder" else cleanupReason(entry.name).orEmpty())
+                                if (!entry.directory && entry.size >= 0) Text(android.text.format.Formatter.formatFileSize(context, entry.size))
+                            }
                         }
                     }
                 }
