@@ -15,21 +15,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme(colorScheme = darkColorScheme()) { Explorer() } }
+        setContent { VireoTheme { Explorer() } }
     }
 
     @Composable private fun Explorer() {
         val storage = remember { Storage(contentResolver) }
-        val scope = rememberCoroutineScope()
         var path by remember { mutableStateOf<List<Pair<Uri,String>>>(emptyList()) }
         var roots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }) }
         var entries by remember { mutableStateOf<List<Entry>>(emptyList()) }
@@ -60,9 +57,9 @@ class MainActivity : ComponentActivity() {
         BackHandler(selected != null || path.isNotEmpty()) {
             if(selected != null) selected = null else path = path.dropLast(1)
         }
-        Column(Modifier.fillMaxSize().background(Color(0xFF080A0C)).padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium)
-            Text(path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" })
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            Text(path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = { try { picker.launch(null) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
                 if(parent != null) {

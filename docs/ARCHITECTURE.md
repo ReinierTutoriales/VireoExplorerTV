@@ -22,3 +22,6 @@ Explorer, Intelligence, Cleaner, Media, Network, Transfer, Archives, Security sh
 
 ## Evidence
 Track startup, frame timing, focus navigation, memory, idle CPU, APK size, throughput and cancellation with reproducible measurements. R8/resource shrinking, Baseline Profiles and Macrobenchmark when runnable. No claimed gains without measured baseline. Physical testing is separate from emulator/CI; global Android TV baseline is the default.
+
+## Visual identity
+Pure AMOLED black (#000000) window and content background, near-black elevated surfaces, mint accent (#80DCC0), high-contrast text. Central AndroidX TV Material color scheme; native TV component focus and typography defaults. Verify focus contrast, D-pad navigation and startup on emulator before claiming visual acceptance. Do not introduce mobile Material widgets or custom focus systems without evidence.
