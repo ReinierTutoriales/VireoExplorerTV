@@ -10,6 +10,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.sp
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -205,12 +210,42 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             } },
             onRelease = { it.player = null; it.keepScreenOn = false },
             modifier = Modifier.fillMaxSize())
+        if (!video) {
+            val artwork = metadata.artworkData
+            val cover by produceState<android.graphics.Bitmap?>(null, artwork) {
+                value = null
+                if (artwork != null && artwork.size <= 8 * 1024 * 1024) {
+                    value = withContext(Dispatchers.IO) {
+                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(artwork, 0, artwork.size, options)
+                        if (options.outWidth <= 0 || options.outHeight <= 0) null
+                        else {
+                            var sample = 1
+                            while (maxOf(options.outWidth, options.outHeight) / sample > 1024) sample *= 2
+                            BitmapFactory.decodeByteArray(artwork, 0, artwork.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                        }
+                    }
+                }
+            }
+            Row(Modifier.align(Alignment.Center).fillMaxWidth().padding(start = 48.dp, end = 48.dp, bottom = 140.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                Box(Modifier.weight(1f).aspectRatio(1f).background(Color(0xFF121212)), contentAlignment = Alignment.Center) {
+                    val bitmap = cover
+                    if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Album artwork", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    else Text("♪", fontSize = 64.sp)
+                }
+                Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, fontSize = 32.sp, maxLines = 2)
+                    metadata.artist?.toString()?.let { Text(it, fontSize = 24.sp, maxLines = 2) }
+                    metadata.albumTitle?.toString()?.let { Text(it, fontSize = 18.sp, maxLines = 2) }
+                }
+            }
+        }
         if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
         if (controlsVisible || buffering || error != null) Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).padding(16.dp)
         ) {
-        Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name)
-        if (!video) metadata.artist?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it) }
+        if (video) Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name)
         if (buffering) Text("Buffering…")
         error?.let { Text(it) }
         if (durationMs > 0) {
