@@ -36,6 +36,7 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     val context = LocalContext.current
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var capacity by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var loading by remember { mutableStateOf(true) }
     var sizes by remember { mutableStateOf<Map<String, AppSize>>(emptyMap()) }
     var measuring by remember { mutableStateOf(false) }
@@ -59,6 +60,12 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     LaunchedEffect(revision) {
         loading = true
         error = null
+        capacity = withContext(Dispatchers.IO) {
+            try {
+                val fs = android.os.StatFs(context.filesDir.absolutePath)
+                fs.totalBytes to fs.availableBytes
+            } catch (_: IllegalArgumentException) { null }
+        }
         try {
             apps = withContext(Dispatchers.IO) {
                 val pm = context.packageManager
@@ -103,14 +110,26 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                 }
             }) { Text("Measure applications") }
             Button(onClick = { sort = (sort + 1) % 3 }) { Text(listOf("Name", "Largest", "Cache")[sort]) }
-            if (measuring) Button(onClick = { statsJob?.cancel(); measuring = false }) { Text("Cancel") }
+            if (measuring) Button(onClick = { statsJob?.cancel() }) { Text("Cancel") }
         }
-        if (sizes.isNotEmpty()) Text("Measured: ${sizes.size} / ${apps.size} visible apps")
+
         if (measuring) Text("Measuring storage…")
         Text("Visible applications only. Clear cache, clear data and uninstall through Android settings.")
         error?.let { Text(it) }
         if (loading) Text("Loading applications…")
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                fun size(bytes: Long) = android.text.format.Formatter.formatFileSize(context, bytes)
+                capacity?.let { (total, free) ->
+                    Text("Internal data volume: ${size(total)} total · ${size(free)} available")
+                    Text("Used or reserved: ${size((total - free).coerceAtLeast(0L))}")
+                }
+                if (sizes.isNotEmpty()) {
+                    Text("Measured: ${sizes.size} / ${apps.size} visible apps")
+                    Text("Reported app sizes: ${size(sizes.values.sumOf { it.total })} · cache: ${size(sizes.values.sumOf { it.cache })}")
+                    Text("Package totals may include shared code; cache is not guaranteed recoverable.")
+                }
+            }
             item { Text("Cleanup — authorized folders") }
             items(roots, key = { "cleanup:$it" }) { root ->
                 Button(onClick = { onAnalyze(root) }, modifier = Modifier.fillMaxWidth()) {
