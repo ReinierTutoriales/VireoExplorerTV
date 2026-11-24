@@ -120,38 +120,16 @@ class Storage(private val resolver: ContentResolver) {
         var verified = false
         try {
             check(target != entry.uri) { "Destination equals source" }
-            val digest = MessageDigest.getInstance("SHA-256")
-            val buffer = ByteArray(128 * 1024)
-            var total = 0L
-            checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+            val expectedSize = entry.size.takeIf { it >= 0 }
+            val original = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
                 checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        digest.update(buffer, 0, count)
-                        total += count
-                        progress(total)
-                    }
+                    transferDigest(input, output, expectedSize, progress)
                 }
             }
-            check(entry.size < 0 || total == entry.size) { "Source size changed" }
-            val expected = digest.digest()
-            suspend fun hash(uri: Uri): ByteArray {
-                val md = MessageDigest.getInstance("SHA-256")
-                checkNotNull(resolver.openInputStream(uri)).use { input ->
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        md.update(buffer, 0, count)
-                    }
-                }
-                return md.digest()
-            }
-            check(expected.contentEquals(hash(target))) { "Destination verification failed" }
-            if (move) check(expected.contentEquals(hash(entry.uri))) { "Source changed during transfer" }
+            suspend fun verify(uri: Uri): TransferDigest =
+                checkNotNull(resolver.openInputStream(uri)).use { transferDigest(it, expected = original.bytes) }
+            check(original.matches(verify(target))) { "Destination verification failed" }
+            if (move) check(original.matches(verify(entry.uri))) { "Source changed during transfer" }
             coroutineContext.ensureActive()
             verified = true
             if (move) delete(entry)

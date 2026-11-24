@@ -53,3 +53,5 @@ CI 45433634053 passed. Added user-triggered 15-second DNS-SD SMB discovery via N
 CI 45434197304 passed. DNS-SD now retains original service information and uses ServiceInfoCallback on API 34+, with cancellation unregister and single completion; legacy resolution retained below API 34. New CI and network integration pending.
 
 CI 45434880043 passed. Extracted reusable streaming SHA-256 transfer primitive and migrated SMB upload/download to it. Added unit tests for multi-buffer copy, hash mismatch and size mismatch. Local SAF migration remains pending. New CI pending.
+
+Migrated local SAF copy/move to the same bounded JCA SHA-256 streaming primitive as SMB. Preserved progress, destination verification and source recheck before deletion. No new dependencies. CI pending; provider operations are not atomic.

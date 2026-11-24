@@ -10,7 +10,7 @@ internal data class TransferDigest(val bytes: Long, val hash: ByteArray) {
     fun matches(other: TransferDigest): Boolean = bytes == other.bytes && hash.contentEquals(other.hash)
 }
 
-internal suspend fun transferDigest(input: InputStream, output: OutputStream? = null, expected: Long? = null): TransferDigest {
+internal suspend fun transferDigest(input: InputStream, output: OutputStream? = null, expected: Long? = null, progress: (Long) -> Unit = {}): TransferDigest {
     require(expected == null || expected >= 0)
     val digest = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(128 * 1024)
@@ -24,6 +24,7 @@ internal suspend fun transferDigest(input: InputStream, output: OutputStream? = 
         check(expected == null || total <= expected) { "File size changed" }
         output?.write(buffer, 0, n)
         digest.update(buffer, 0, n)
+        progress(total)
     }
     check(expected == null || total == expected) { "Incomplete transfer" }
     return TransferDigest(total, digest.digest())
