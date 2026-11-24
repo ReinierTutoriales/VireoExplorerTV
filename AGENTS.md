@@ -16,3 +16,6 @@ Read relevant instructions in .agents/skills: agent-governance before repository
 
 ## Binding product and execution specifications
 Read [architecture](docs/ARCHITECTURE.md) and [execution](docs/EXECUTION.md) before implementation. Apply native-tv-development, storage-media-network and efficient-delivery skills alongside existing skills. These documents define the complete target, not implemented features. Keep implementation status and evidence accurate. Prefer minimum complete passes, never skip validation.
+
+## AMOLED TV UI
+Mandatory native Jetpack Compose for TV and AndroidX TV Material, latest compatible stable versions verified against official releases. Pure black #000000 window and content background; #121212 surfaces, #80DCC0 mint accent, #F2F4F3 primary text. Centralize tokens in VireoTheme; preserve native TV focus, typography and D-pad behavior. No mobile-only Material components or unnecessary UI libraries. Verify startup, focus contrast, back navigation and accessibility. Theme source introduced in 147e72c; build and visual acceptance remain unverified.
