@@ -90,6 +90,51 @@ private suspend fun downloadSmb(endpoint: SmbEndpoint, path: String, expected: L
     check(verified == expected && sourceHash.contentEquals(digest.digest())) { "Destination verification failed" }
 }
 
+private suspend fun uploadSmb(endpoint: SmbEndpoint, folder: List<String>, resolver: android.content.ContentResolver, source: android.net.Uri) = withSmbShare(endpoint) { share ->
+    val name = checkNotNull(resolver.query(source, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)).use {
+        check(it.moveToFirst())
+        it.getString(0)
+    }
+    require(validName(name) && !name.contains(':') && !name.endsWith('.') && !name.endsWith(' '))
+    val path = (folder + name).joinToString("\\")
+    val buffer = ByteArray(128 * 1024)
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    var total = 0L
+    share.openFile(path, EnumSet.of(AccessMask.GENERIC_WRITE), null,
+        EnumSet.noneOf(SMB2ShareAccess::class.java), SMB2CreateDisposition.FILE_CREATE,
+        EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
+        checkNotNull(resolver.openInputStream(source)).use { input ->
+            file.outputStream.use { output ->
+                while (true) {
+                    kotlin.coroutines.coroutineContext.ensureActive()
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    output.write(buffer, 0, n)
+                    digest.update(buffer, 0, n)
+                    total += n
+                }
+            }
+        }
+    }
+    val expected = digest.digest()
+    var verified = 0L
+    share.openFile(path, EnumSet.of(AccessMask.GENERIC_READ), null,
+        EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN,
+        EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)).use { file ->
+        file.inputStream.use { input ->
+            while (true) {
+                kotlin.coroutines.coroutineContext.ensureActive()
+                val n = input.read(buffer)
+                if (n < 0) break
+                verified += n
+                check(verified <= total)
+                digest.update(buffer, 0, n)
+            }
+        }
+    }
+    check(verified == total && expected.contentEquals(digest.digest())) { "Remote verification failed" }
+}
+
 @Composable
 internal fun SmbBrowser(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -121,6 +166,22 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             }
         }
     }
+    val upload = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && server != null && transfer == null) {
+            val folder = path.toList()
+            transfer = scope.launch {
+                try {
+                    uploadSmb(server, folder, context.contentResolver, uri)
+                    status = "Upload completed and verified (SHA-256)"
+                } catch (e: CancellationException) {
+                    status = "Upload cancelled; a partial remote file may remain"
+                    throw e
+                } catch (_: Exception) {
+                    status = "Upload failed (existing file, access or connection); a partial file may remain"
+                } finally { transfer = null; refresh++ }
+            }
+        }
+    }
     DisposableEffect(server) { onDispose { server?.password?.fill('\u0000') } }
     fun back() { if (transfer != null) return; if (path.isNotEmpty()) path = path.dropLast(1) else onClose() }
     BackHandler { back() }
@@ -135,7 +196,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         }
     }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("SMB 2/3 · browse and download")
+        Text("SMB 2/3 · browse and transfer")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { back() }) { Text("Back") }
             Button(enabled = !loading && transfer == null, onClick = {
@@ -158,10 +219,13 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     }.show()
             }) { Text("Connect") }
             Button(enabled = server != null && !loading && transfer == null, onClick = { refresh++ }) { Text("Refresh") }
+            Button(enabled = server != null && !loading && transfer == null && pending == null, onClick = {
+                try { upload.launch(arrayOf("*/*")) } catch (_: Exception) { status = "System file picker unavailable" }
+            }) { Text("Upload") }
         }
         Text(path.joinToString(" / ").ifEmpty { server?.share ?: "Enter server credentials" })
         status?.let { Text(it) }
-        if (transfer != null) Button(onClick = { transfer?.cancel() }) { Text("Cancel download") }
+        if (transfer != null) Button(onClick = { transfer?.cancel() }) { Text("Cancel transfer") }
         if (loading) Text("Connecting…")
         error?.let { Text(it) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -37,3 +37,5 @@ SMBJ 0.15.0 verified against Maven Central and upstream examples on 2026-11-24. 
 SMB compilation CI 45428142635 passed. Added read-only SMB download to user-selected SAF document with bounded buffer, size verification, cancellation and explicit partial-file warning. No automatic deletion of destination because provider ownership/overwrite cannot be assumed. New CI and real server validation pending.
 
 CI 45429056502 passed. Consolidated SMB connection lifecycle and authentication; download now verifies local destination size and SHA-256 by rereading it. No new dependencies or permissions. A destination without read access cannot be reported verified. New CI pending.
+
+CI 45430026684 passed. Added SMB upload from SAF OpenDocument using FILE_CREATE (no overwrite), bounded streaming, cancellation and remote SHA-256 verification. Partial remote files may remain on failure; no automatic destructive cleanup. New CI and server integration pending.
