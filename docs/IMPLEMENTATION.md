@@ -45,3 +45,5 @@ CI 45430913449 passed. Added seekable SMB Media3 DataSource and reused MediaView
 CI 45431467789 passed. Added SMB folder creation and non-replacing rename for files and directories, shared name validation and unit tests. Case-only rename deliberately rejected; remote deletion not yet enabled. New CI and server validation pending.
 
 CI 45432402957 passed. Added explicitly confirmed permanent SMB deletion, metadata revalidation and nonrecursive empty-directory deletion. Path-based revalidation is not atomic against concurrent remote modifications. New CI and real server validation pending.
+
+CI 45433047121 passed. Added explicit opt-in single saved SMB connection encrypted with AndroidKeyStore AES-256/GCM, fresh IV per save, encrypted preferences, manual restore and forget. No automatic connection or new permissions. Hardware-backed key availability varies; transient JVM strings cannot be guaranteed erased. New CI and runtime Keystore validation pending.

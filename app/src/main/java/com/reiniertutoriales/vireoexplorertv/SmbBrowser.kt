@@ -186,6 +186,8 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+    val credentials = remember(context) { SmbCredentials(context) }
+    var credentialBusy by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     var transfer by remember { mutableStateOf<Job?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -272,7 +274,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         Text("SMB 2/3 · browse and transfer")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { back() }) { Text("Back") }
-            Button(enabled = !loading && transfer == null, onClick = {
+            Button(enabled = !loading && transfer == null && !credentialBusy, onClick = {
                 val fields = listOf("Server host or IP", "Share name", "Username", "Domain (optional)", "Password").map { label ->
                     EditText(context).apply { hint = label; setSingleLine(true) }
                 }
@@ -300,6 +302,40 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 val folder = path.toList()
                 editName("New remote folder", "") { createSmbFolder(active, folder, it) }
             }) { Text("New folder") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = server != null && !loading && transfer == null && !credentialBusy, onClick = {
+                val active = server ?: return@Button
+                val snapshot = SmbEndpoint(active.host, active.share, active.user, active.domain, active.password.copyOf())
+                credentialBusy = true
+                scope.launch {
+                    try { credentials.save(snapshot); status = "Connection saved encrypted" }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { status = "Could not save credentials" }
+                    finally { snapshot.password.fill('\u0000'); credentialBusy = false }
+                }
+            }) { Text("Remember connection") }
+            Button(enabled = !loading && transfer == null && !credentialBusy, onClick = {
+                credentialBusy = true
+                scope.launch {
+                    try {
+                        val saved = credentials.load()
+                        if (saved == null) status = "No saved connection"
+                        else { endpoint = saved; path = emptyList(); status = null }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { status = "Saved credentials unavailable; forget and reconnect" }
+                    finally { credentialBusy = false }
+                }
+            }) { Text("Saved connection") }
+            Button(enabled = !credentialBusy && transfer == null, onClick = {
+                credentialBusy = true
+                scope.launch {
+                    try { credentials.forget(); status = "Saved connection removed" }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { status = "Could not remove saved connection" }
+                    finally { credentialBusy = false }
+                }
+            }) { Text("Forget saved") }
         }
         Text(path.joinToString(" / ").ifEmpty { server?.share ?: "Enter server credentials" })
         status?.let { Text(it) }
