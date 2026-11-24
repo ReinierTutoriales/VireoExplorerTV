@@ -18,6 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import android.app.AlertDialog
+import android.widget.EditText
+import android.text.InputType
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -26,6 +30,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable private fun Explorer() {
+        val scope = rememberCoroutineScope()
         val storage = remember { Storage(contentResolver) }
         var path by remember { mutableStateOf<List<Pair<Uri,String>>>(emptyList()) }
         var roots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }) }
@@ -34,6 +39,17 @@ class MainActivity : ComponentActivity() {
         var busy by remember { mutableStateOf(false) }
         var revision by remember { mutableIntStateOf(0) }
         var selected by remember { mutableStateOf<Entry?>(null) }
+        var mutating by remember { mutableStateOf(false) }
+        fun mutate(action: suspend () -> Unit) {
+            if (mutating) return
+            mutating = true
+            scope.launch {
+                try { action(); selected = null; revision++ }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { error = e.localizedMessage ?: "Operation failed" }
+                finally { mutating = false }
+            }
+        }
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) try {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -54,21 +70,24 @@ class MainActivity : ComponentActivity() {
                 finally { busy = false }
             }
         }
-        BackHandler(selected != null || path.isNotEmpty()) {
+        BackHandler(mutating || selected != null || path.isNotEmpty()) {
+            if (mutating) return@BackHandler
             if(selected != null) selected = null else path = path.dropLast(1)
         }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
             Text(path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { try { picker.launch(null) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
+                Button(enabled = !mutating, onClick = { try { picker.launch(null) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
                 if(parent != null) {
-                    Button(onClick = { path = path.dropLast(1) }) { Text("Back") }
-                    Button(onClick = { revision++ }) { Text("Refresh") }
+                    Button(enabled = !mutating, onClick = { path = path.dropLast(1) }) { Text("Back") }
+                    Button(enabled = !mutating, onClick = { revision++ }) { Text("Refresh") }
+                    Button(enabled = !mutating && !busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
                 }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if(busy) Text("Reading storage…")
+            if(mutating) Text("Working…")
             val item = selected
             if(item != null) {
                 Text(item.name)
@@ -78,7 +97,17 @@ class MainActivity : ComponentActivity() {
                         try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         catch(e: Exception) { error = "No compatible viewer installed" }
                     }) { Text("Open") }
-                    Button(onClick = { selected = null }) { Text("Close") }
+                    if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
+                        Button(enabled = !mutating, onClick = { nameDialog("Rename", item.name) { name -> mutate { storage.rename(item, name) } } }) { Text("Rename") }
+                    }
+                    if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
+                        Button(enabled = !mutating, onClick = {
+                            AlertDialog.Builder(this@MainActivity).setTitle("Delete file?")
+                                .setMessage(item.name).setNegativeButton("Cancel", null)
+                                .setPositiveButton("Delete") { _, _ -> mutate { storage.delete(item) } }.show()
+                        }) { Text("Delete") }
+                    }
+                    Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
                 }
             } else if(parent == null) {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -89,12 +118,30 @@ class MainActivity : ComponentActivity() {
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(entries, key = { it.uri.toString() }) { entry ->
-                        Button(onClick = { if(entry.directory) path = path + (entry.uri to entry.name) else selected = entry }, modifier = Modifier.fillMaxWidth()) {
+                        Button(enabled = !mutating, onClick = { if(entry.directory) path = path + (entry.uri to entry.name) else selected = entry }, modifier = Modifier.fillMaxWidth()) {
                             Text((if(entry.directory) "▸  " else "") + entry.name)
                         }
                     }
                 }
             }
         }
+    }
+    private fun nameDialog(title: String, initial: String, onConfirm: (String) -> Unit) {
+        val field = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+            setText(initial)
+            selectAll()
+        }
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(field)
+            .setNegativeButton("Cancel", null).setPositiveButton("OK", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = field.text.toString()
+                if (!validName(name)) field.error = "Invalid name"
+                else { dialog.dismiss(); onConfirm(name) }
+            }
+        }
+        dialog.show()
     }
 }

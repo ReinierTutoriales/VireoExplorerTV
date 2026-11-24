@@ -25,6 +25,11 @@ class Storage(private val resolver: ContentResolver) {
         require(validName(name))
         checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
     }
+    suspend fun rename(entry: Entry, name: String) = withContext(Dispatchers.IO) {
+        require(validName(name))
+        check(entry.flags and D.Document.FLAG_SUPPORTS_RENAME != 0)
+        checkNotNull(D.renameDocument(resolver, entry.uri, name))
+    }
     suspend fun delete(entry: Entry) = withContext(Dispatchers.IO) {
         check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
         check(D.deleteDocument(resolver, entry.uri))
