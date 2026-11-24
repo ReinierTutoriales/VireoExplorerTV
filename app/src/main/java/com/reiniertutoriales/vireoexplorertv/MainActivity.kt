@@ -16,7 +16,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -40,8 +41,18 @@ class MainActivity : ComponentActivity() {
 
     @Composable private fun Explorer() {
         val storage = model.storage
-        var gridView by rememberSaveable { mutableStateOf(false) }
-        var sortIndex by rememberSaveable { mutableIntStateOf(0) }
+        val preferences = remember { ExplorerPreferences(applicationContext) }
+        val settings by preferences.settings.collectAsStateWithLifecycle(initialValue = ExplorerSettings())
+        val gridView = settings.grid
+        val sortIndex = settings.sort
+        val settingsScope = rememberCoroutineScope()
+        fun updateSettings(change: suspend () -> Unit) {
+            settingsScope.launch {
+                try { change() }
+                catch (e: CancellationException) { throw e }
+                catch (_: Exception) { model.error = "Cannot save explorer preferences" }
+            }
+        }
         val sortLabels = listOf("Name A–Z", "Name Z–A", "Largest first", "Smallest first")
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val uri = result.data?.data
@@ -114,8 +125,8 @@ class MainActivity : ComponentActivity() {
                 if(parent != null) {
                     Button(enabled = !model.mutating, onClick = { model.path = model.path.dropLast(1) }) { Text("Back") }
                     Button(enabled = !model.mutating, onClick = { model.revision++ }) { Text("Refresh") }
-                    Button(onClick = { gridView = !gridView }) { Text(if (gridView) "List" else "Grid") }
-                    Button(onClick = { sortIndex = (sortIndex + 1) % sortLabels.size }) { Text(sortLabels[sortIndex]) }
+                    Button(onClick = { updateSettings { preferences.toggleGrid() } }) { Text(if (gridView) "List" else "Grid") }
+                    Button(onClick = { updateSettings { preferences.nextSort() } }) { Text(sortLabels[sortIndex]) }
                     Button(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
                     Button(enabled = !model.mutating, onClick = { searchDialog(model.search) { model.search = it } }) { Text("Search") }
                     Button(enabled = !model.mutating && !model.busy && model.selected == null, onClick = { model.multi = !model.multi; model.marked = emptySet() }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
