@@ -31,3 +31,6 @@ Follow [UI specification](docs/UI.md) (repository-root path). Prefer official TV
 
 ## Integrated player
 Follow [docs/PLAYER.md](docs/PLAYER.md) for all playback changes. Hardware-first Media3, native TV controls, subtitle support and lifecycle correctness are mandatory.
+
+## Integrated image viewer
+Follow [docs/IMAGE_VIEWER.md](docs/IMAGE_VIEWER.md). Native decoding and rendering first, bounded memory, lifecycle-aware animation and capability-based format extensions.
