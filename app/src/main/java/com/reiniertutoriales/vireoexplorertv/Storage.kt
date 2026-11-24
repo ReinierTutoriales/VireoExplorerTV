@@ -120,6 +120,21 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         delete(current)
     }
+    suspend fun moveDirectory(entry: Entry, sourceParent: Uri, destination: Uri): Uri = withContext(Dispatchers.IO) {
+        require(android.os.Build.VERSION.SDK_INT >= 24 && entry.directory)
+        requireGrant(entry.uri, true)
+        requireGrant(sourceParent, true)
+        requireGrant(destination, true)
+        check(entry.uri.authority == destination.authority && D.getTreeDocumentId(entry.uri) == D.getTreeDocumentId(destination)) { "Folder move requires the same storage grant" }
+        check(D.getDocumentId(sourceParent) != D.getDocumentId(destination)) { "Already in destination" }
+        check(D.getDocumentId(entry.uri) != D.getDocumentId(destination)) { "Cannot move into itself" }
+        check(!D.isChildDocument(resolver, entry.uri, destination)) { "Cannot move into a descendant" }
+        check(revalidate(entry).flags and D.Document.FLAG_SUPPORTS_MOVE != 0) { "Provider does not support folder move" }
+        check(children(sourceParent).any { it.uri == entry.uri }) { "Source folder changed" }
+        check(children(destination).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
+        coroutineContext.ensureActive()
+        checkNotNull(D.moveDocument(resolver, entry.uri, sourceParent, destination)) { "Provider move failed" }
+    }
     suspend fun copyDirectory(entry: Entry, parent: Uri, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         require(entry.directory && validName(entry.name))
         requireGrant(entry.uri)

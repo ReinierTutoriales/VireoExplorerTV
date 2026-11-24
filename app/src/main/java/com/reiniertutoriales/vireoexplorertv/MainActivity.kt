@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
         var selected by remember { mutableStateOf<Entry?>(null) }
         var viewing by remember { mutableStateOf<Entry?>(null) }
         var clipboard by remember { mutableStateOf<Pair<List<Entry>, Boolean>?>(null) }
+        var clipboardParent by remember { mutableStateOf<Uri?>(null) }
         var multi by remember { mutableStateOf(false) }
         var marked by remember { mutableStateOf<Set<Uri>>(emptySet()) }
         var transferJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -180,7 +181,8 @@ class MainActivity : ComponentActivity() {
                                 for (entry in pending.first) {
                                     transferred = 0
                                     try {
-                                        if (entry.directory) storage.copyDirectory(entry, destination, report)
+                                        if (entry.directory && pending.second) storage.moveDirectory(entry, checkNotNull(clipboardParent), destination)
+                                        else if (entry.directory) storage.copyDirectory(entry, destination, report)
                                         else storage.transfer(entry, destination, pending.second, report)
                                         completed++
                                         clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
@@ -208,7 +210,7 @@ class MainActivity : ComponentActivity() {
                     Text("${batch.size} selected")
                     Button(enabled = !mutating, onClick = { marked = entries.filter { it.name.contains(search, ignoreCase = true) }.map { it.uri }.toSet() }) { Text("Select all visible") }
                     Button(enabled = !mutating && batch.isNotEmpty(), onClick = { clipboard = batch to false; multi = false; marked = emptySet() }) { Text("Copy selected") }
-                    Button(enabled = !mutating && writable && batch.isNotEmpty() && batch.all { !it.directory && it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { clipboard = batch to true; multi = false; marked = emptySet() }) { Text("Move selected") }
+                    Button(enabled = !mutating && writable && batch.isNotEmpty() && batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { clipboardParent = parent; clipboard = batch to true; multi = false; marked = emptySet() }) { Text("Move selected") }
                 }
             }
             val item = selected
@@ -234,7 +236,7 @@ class MainActivity : ComponentActivity() {
                     }
                     Button(enabled = !mutating, onClick = { clipboard = listOf(item) to false; selected = null }) { Text("Copy") }
                     if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !mutating && !item.directory, onClick = { clipboard = listOf(item) to true; selected = null }) { Text("Move") }
+                        Button(enabled = !mutating && (!item.directory || item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0), onClick = { clipboardParent = parent; clipboard = listOf(item) to true; selected = null }) { Text("Move") }
                     }
                     Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
                 }
