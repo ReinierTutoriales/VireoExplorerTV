@@ -7,3 +7,5 @@ Mandatory native Jetpack Compose for TV and AndroidX TV Material, latest compati
 CI run 45415816950: sdkmanager runs but cannot find platforms;android-37. Use API 36 provisionally for compile/target until API 37 availability is verified. Build remains unverified.
 
 SAF operations: create folder, rename and confirmed deletion of selected files wired to UI, provider flags checked for rename/delete. Native framework input/confirmation dialogs are interim until TV Material dialog and text input validation. Directory rename/delete, transfer, direct storage fallback and focus validation remain pending. No new dependencies.
+
+Run 45417554338 resolved dependencies but failed checkDebugAarMetadata: Compose 1.13.0 requires compile API 37.1 or newer. Attempt compile SDK 37.2 using minor API DSL and matching SDK package; retain target 36 and min 24. SDK availability and DSL/build still require CI confirmation.

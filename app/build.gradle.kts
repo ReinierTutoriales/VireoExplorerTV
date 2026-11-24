@@ -1,7 +1,7 @@
 plugins { alias(libs.plugins.android); alias(libs.plugins.compose) }
 android {
  namespace = "com.reiniertutoriales.vireoexplorertv"
- compileSdk = 36
+ compileSdk { version = release(37) { minorApiLevel = 2 } }
  defaultConfig { applicationId = "com.reiniertutoriales.vireoexplorertv"; minSdk = 24; targetSdk = 36; versionCode = 1; versionName = "0.1.0" }
  buildFeatures { compose = true }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
