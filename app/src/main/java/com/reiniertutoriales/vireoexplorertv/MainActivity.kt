@@ -71,6 +71,11 @@ class MainActivity : ComponentActivity() {
                 finally { busy = false }
             }
         }
+        val video = viewing?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
+        if (video != null) {
+            MediaViewer(video, onClose = { viewing = null })
+            return
+        }
         val image = viewing
         if (image != null) {
             ImageViewer(image, contentResolver, onClose = { viewing = null })
@@ -100,7 +105,7 @@ class MainActivity : ComponentActivity() {
                 Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = {
-                        if (item.mime.startsWith("image/")) viewing = item
+                        if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) viewing = item
                         else try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         catch(e: Exception) { error = "No compatible viewer installed" }
                     }) { Text("Open") }
