@@ -37,3 +37,5 @@ Follow [docs/IMAGE_VIEWER.md](docs/IMAGE_VIEWER.md). Native decoding and renderi
 
 ## Unified specification index
 Use docs/ARCHITECTURE.md, docs/EXECUTION.md and docs/ROADMAP.md for all work; docs/ENGINES.md for storage/network/cleaner/archives; docs/UI.md for interface; docs/PLAYER.md and docs/IMAGE_VIEWER.md for multimedia. docs/IMPLEMENTATION.md records evidence, not targets. Apply relevant skills together. Implementation requests require code and validation, not documentation alone unless blocked.
+
+Application and system storage management: follow docs/APP_MANAGEMENT.md. Initial visible-app inventory and official settings shortcuts implemented; actual temporary-file cleanup, usage statistics and own-cache cleanup pending. No broad package visibility permission added. New CI pending.

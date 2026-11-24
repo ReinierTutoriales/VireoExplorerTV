@@ -6,3 +6,5 @@ Read docs/ARCHITECTURE.md. Use unified capability-aware storage contracts, SAF a
 
 ## Integrated project requirements
 Read docs/ENGINES.md, docs/PLAYER.md and docs/IMAGE_VIEWER.md. Apply shared streaming/seek contracts, hardware-first Media3 with track/subtitle selection, viewport-sized image decoding, bounded cache, local intelligence, verified duplicate preservation and secure protocol-specific authentication. Candidate libraries require current stable release, license and compatibility verification.
+
+Application and system storage management: follow docs/APP_MANAGEMENT.md. Initial visible-app inventory and official settings shortcuts implemented; actual temporary-file cleanup, usage statistics and own-cache cleanup pending. No broad package visibility permission added. New CI pending.
