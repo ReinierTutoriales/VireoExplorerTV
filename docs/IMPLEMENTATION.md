@@ -75,3 +75,5 @@ CI 45446808435 passed. Added stop/skip/keep-both conflict policies, case-insensi
 CI 45448074062 passed. Explorer state and storage instance moved to AndroidViewModel; mutation and transfer jobs use viewModelScope, retaining state across Activity recreation. UI state still uses Compose snapshots; StateFlow and process-death restoration remain pending. New CI pending.
 
 Moved directory loading, mutation and paste execution into ExplorerModel; retained load identity across Activity recreation, StateFlow progress from IO, corrected refactor UI labels. SavedStateHandle and full immutable UI state remain pending. CI pending.
+
+CI 45449046306 passed. SavedStateHandle persists navigation URI/label pairs and restores only matching persisted read grants, bounded to 128 entries. Load generation prevents obsolete requests from publishing state. Transfer progress exposed read-only StateFlow. Horizontal scrolling prevents toolbar clipping; TV focus behavior still requires validation. No automatic destructive operation recovery. New CI pending.

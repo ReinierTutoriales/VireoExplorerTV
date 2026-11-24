@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.*
@@ -96,7 +98,7 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
             Text(model.path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(enabled = !model.mutating, onClick = { try { picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)) } catch (e: Exception) { model.error = "System folder picker unavailable" } }) { Text("Add folder") }
                 if (parent == null) {
                     Button(enabled = !model.mutating, onClick = { model.appsOpen = true }) { Text("Apps & storage") }
@@ -112,7 +114,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (model.search.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Search: ${model.search}")
                     Button(onClick = { model.search = "" }) { Text("Clear search") }
                 }
@@ -123,7 +125,7 @@ class MainActivity : ComponentActivity() {
             if(model.mutating) Text("Working…")
             val pending = model.clipboard
             if (pending != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text((if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name })
                     Button(enabled = parent != null && writable && !model.mutating && !model.busy, onClick = {
                         val destination = parent ?: return@Button
@@ -134,7 +136,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (model.transferJob != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val bytes by model.progress.collectAsState()
                     Text("${bytes / 1024} KiB")
                     Button(onClick = { model.transferJob?.cancel() }) { Text("Cancel transfer") }
@@ -142,7 +144,7 @@ class MainActivity : ComponentActivity() {
             }
             if (model.multi) {
                 val batch = model.entries.filter { it.uri in model.marked }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${batch.size} selected")
                     Button(enabled = !model.mutating, onClick = { model.marked = model.entries.filter { it.name.contains(model.search, ignoreCase = true) }.map { it.uri }.toSet() }) { Text("Select all visible") }
                     Button(enabled = !model.mutating && batch.isNotEmpty(), onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }) { Text("Copy selected") }
@@ -153,7 +155,7 @@ class MainActivity : ComponentActivity() {
             if(item != null) {
                 Text(item.name)
                 Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(enabled = !model.mutating, onClick = {
                         if (item.directory) { model.path = model.path + (item.uri to item.name); model.selected = null }
                         else if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) model.viewing = item
