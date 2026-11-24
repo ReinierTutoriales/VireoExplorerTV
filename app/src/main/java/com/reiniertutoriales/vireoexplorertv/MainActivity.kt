@@ -202,6 +202,14 @@ class MainActivity : ComponentActivity() {
                                 .setPositiveButton("Delete") { _, _ -> model.mutate { storage.delete(item) } }.show()
                         }) { Text("Delete") }
                     }
+                    if (writable && parent != null && !item.directory && item.name.endsWith(".zip", true)) {
+                        Button(enabled = !model.mutating, onClick = {
+                            AlertDialog.Builder(this@MainActivity).setTitle("Extract ZIP?")
+                                .setMessage("Extract into a new folder. Completed files may remain if extraction fails.")
+                                .setNegativeButton("Cancel", null)
+                                .setPositiveButton("Extract") { _, _ -> model.mutate { storage.extractZip(item, parent) } }.show()
+                        }) { Text("Extract ZIP") }
+                    }
                     Button(enabled = !model.mutating, onClick = { model.clipboard = listOf(item) to false; model.selected = null }) { Text("Copy") }
                     if (writable && (if (item.directory) item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0)) {
                         Button(enabled = !model.mutating && (!item.directory || item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0), onClick = { model.clipboardParent = parent; model.clipboard = listOf(item) to true; model.selected = null }) { Text("Move") }

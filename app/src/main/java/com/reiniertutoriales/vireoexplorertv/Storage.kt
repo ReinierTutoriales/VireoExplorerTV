@@ -33,6 +33,70 @@ class Storage(private val resolver: ContentResolver) {
             }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
         }
     }
+    suspend fun extractZip(entry: Entry, parent: Uri) = withContext(Dispatchers.IO) {
+        requireGrant(entry.uri)
+        requireGrant(parent, true)
+        revalidate(entry)
+        val name = entry.name.dropLast(4).ifBlank { "Extracted" }
+        require(validName(name))
+        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
+        val root = checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
+        val folders = mutableMapOf<List<String>, Uri>(emptyList<String>() to root)
+        val paths = HashSet<List<String>>()
+        var total = 0L
+        var count = 0
+        val buffer = ByteArray(64 * 1024)
+        suspend fun folder(parts: List<String>): Uri {
+            var current = root
+            for (i in parts.indices) {
+                coroutineContext.ensureActive()
+                val key = parts.take(i + 1)
+                current = folders[key] ?: run {
+                    check(folders.size < 10000) { "Too many directories" }
+                    check(children(current).none { it.name.equals(parts[i], true) }) { "Archive name conflict" }
+                    checkNotNull(D.createDocument(resolver, current, D.Document.MIME_TYPE_DIR, parts[i])).also { folders[key] = it }
+                }
+            }
+            return current
+        }
+        try {
+            java.util.zip.ZipInputStream(checkNotNull(resolver.openInputStream(entry.uri)).buffered()).use { zip ->
+                while (true) {
+                    coroutineContext.ensureActive()
+                    val item = zip.nextEntry ?: break
+                    check(++count <= 10000) { "Too many archive entries" }
+                    val parts = zipPath(item.name)
+                    check(paths.add(parts)) { "Duplicate archive path" }
+                    if (item.isDirectory) {
+                        folder(parts)
+                        check(zip.read() == -1) { "Invalid directory entry" }
+                    } else {
+                        val target = folder(parts.dropLast(1))
+                        check(children(target).none { it.name.equals(parts.last(), true) }) { "Archive name conflict" }
+                        val file = checkNotNull(D.createDocument(resolver, target, "application/octet-stream", parts.last()))
+                        try {
+                            checkNotNull(resolver.openOutputStream(file, "w")).use { output ->
+                                while (true) {
+                                    coroutineContext.ensureActive()
+                                    val n = zip.read(buffer)
+                                    if (n < 0) break
+                                    total += n
+                                    check(total <= 4L * 1024 * 1024 * 1024) { "Extraction size limit exceeded" }
+                                    output.write(buffer, 0, n)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, file) } }
+                            throw e
+                        }
+                    }
+                    zip.closeEntry()
+                }
+                check(count > 0) { "Empty or invalid ZIP archive" }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { throw java.io.IOException("Extraction incomplete; completed files may remain: " + e.localizedMessage, e) }
+    }
     suspend fun scan(root: Uri): ScanResult = withContext(Dispatchers.IO) {
         val queue = ArrayDeque<Pair<Uri, Int>>()
         val seen = HashSet<Uri>()
