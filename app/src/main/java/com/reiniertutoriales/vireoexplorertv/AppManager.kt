@@ -23,6 +23,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
+
+private data class AppSize(val app: Long, val data: Long, val cache: Long) {
+    val total get() = app + data
+}
 
 private data class InstalledApp(val name: String, val pkg: String, val system: Boolean)
 
@@ -32,7 +37,9 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    var stats by remember { mutableStateOf<String?>(null) }
+    var sizes by remember { mutableStateOf<Map<String, AppSize>>(emptyMap()) }
+    var measuring by remember { mutableStateOf(false) }
+    var sort by rememberSaveable { mutableIntStateOf(0) }
     var statsJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
     var showSystem by rememberSaveable { mutableStateOf(false) }
@@ -45,7 +52,8 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     BackHandler(onBack = onClose)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         statsJob?.cancel()
-        stats = null
+        sizes = emptyMap()
+        measuring = false
         revision++
     }
     LaunchedEffect(revision) {
@@ -69,10 +77,36 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
             Button(onClick = { open(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)) }) { Text("System storage") }
             Button(onClick = { open(Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS)) }) { Text("Manage apps") }
             Button(onClick = { showSystem = !showSystem }) { Text(if (showSystem) "Hide system" else "Show system") }
-            Button(onClick = { revision++ }) { Text("Refresh") }
+            Button(enabled = !measuring, onClick = { sizes = emptyMap(); revision++ }) { Text("Refresh") }
         }
         Button(onClick = { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Authorize usage statistics") }
-        stats?.let { Text(it) }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = !loading && !measuring && android.os.Build.VERSION.SDK_INT >= 26, onClick = {
+                statsJob?.cancel()
+                measuring = true
+                sizes = emptyMap()
+                val snapshot = apps
+                statsJob = scope.launch {
+                    try {
+                        sizes = withContext(Dispatchers.IO) {
+                            buildMap {
+                                for (app in snapshot) {
+                                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                    try { put(app.pkg, applicationStorage(context, app.pkg)) }
+                                    catch (e: CancellationException) { throw e }
+                                    catch (_: Exception) { /* unavailable for this package */ }
+                                }
+                            }
+                        }
+                        if (sizes.size < snapshot.size) error = "Some statistics unavailable; check usage access"
+                    } finally { measuring = false }
+                }
+            }) { Text("Measure applications") }
+            Button(onClick = { sort = (sort + 1) % 3 }) { Text(listOf("Name", "Largest", "Cache")[sort]) }
+            if (measuring) Button(onClick = { statsJob?.cancel(); measuring = false }) { Text("Cancel") }
+        }
+        if (sizes.isNotEmpty()) Text("Measured: ${sizes.size} / ${apps.size} visible apps")
+        if (measuring) Text("Measuring storage…")
         Text("Visible applications only. Clear cache, clear data and uninstall through Android settings.")
         error?.let { Text(it) }
         if (loading) Text("Loading applications…")
@@ -84,31 +118,34 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                 }
             }
             item { Text("Applications") }
-            items(apps.filter { showSystem || !it.system }, key = { it.pkg }) { app ->
+            items(apps.filter { showSystem || !it.system }.let { visible ->
+                when (sort) {
+                    1 -> visible.sortedByDescending { sizes[it.pkg]?.total ?: -1L }
+                    2 -> visible.sortedByDescending { sizes[it.pkg]?.cache ?: -1L }
+                    else -> visible
+                }
+            }, key = { it.pkg }) { app ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))) }, modifier = Modifier.weight(1f)) {
                     Column { Text(app.name); Text(app.pkg) }
                 }
-                Button(enabled = android.os.Build.VERSION.SDK_INT >= 26, onClick = {
-                    statsJob?.cancel()
-                    statsJob = scope.launch {
-                        stats = try { withContext(Dispatchers.IO) { applicationStorage(context, app.pkg) } }
-                        catch (e: CancellationException) { throw e }
-                        catch (_: SecurityException) { "Usage access required" }
-                        catch (_: Exception) { "Storage statistics unavailable" }
+                sizes[app.pkg]?.let { size ->
+                    Column {
+                        Text("Total: " + android.text.format.Formatter.formatFileSize(context, size.total))
+                        Text("Cache: " + android.text.format.Formatter.formatFileSize(context, size.cache))
                     }
-                }) { Text("Size") }
+                }
+
                 }
             }
         }
     }
 }
 
-private fun applicationStorage(context: android.content.Context, pkg: String): String {
-    if (android.os.Build.VERSION.SDK_INT < 26) return "Storage statistics require Android 8"
+private fun applicationStorage(context: android.content.Context, pkg: String): AppSize {
+    check(android.os.Build.VERSION.SDK_INT >= 26)
     val info = context.packageManager.getApplicationInfo(pkg, 0)
     val manager = context.getSystemService(android.app.usage.StorageStatsManager::class.java)
     val stats = manager.queryStatsForPackage(info.storageUuid, pkg, android.os.Process.myUserHandle())
-    fun size(bytes: Long) = android.text.format.Formatter.formatFileSize(context, bytes)
-    return "$pkg: app ${size(stats.appBytes)} · data ${size(stats.dataBytes)} (includes cache) · cache ${size(stats.cacheBytes)}"
+    return AppSize(stats.appBytes, stats.dataBytes, stats.cacheBytes)
 }
