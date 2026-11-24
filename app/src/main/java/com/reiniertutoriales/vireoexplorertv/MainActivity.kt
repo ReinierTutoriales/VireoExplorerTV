@@ -197,7 +197,11 @@ class MainActivity : ComponentActivity() {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(model.entries.filter { it.name.contains(model.search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
                         Button(enabled = !model.mutating, onClick = { if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri else model.selected = entry }, modifier = Modifier.fillMaxWidth()) {
-                            Text((if (model.multi) { if (entry.uri in model.marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name)
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                FileThumbnail(entry, model.revision)
+                                Text((if (model.multi) { if (entry.uri in model.marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name, modifier = Modifier.weight(1f), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                if (!entry.directory && entry.size >= 0) Text(android.text.format.Formatter.formatFileSize(this@MainActivity, entry.size))
+                            }
                         }
                     }
                 }
