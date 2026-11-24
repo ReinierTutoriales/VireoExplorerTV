@@ -120,6 +120,57 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         delete(current)
     }
+    suspend fun copyDirectory(entry: Entry, parent: Uri, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
+        require(entry.directory && validName(entry.name))
+        requireGrant(entry.uri)
+        requireGrant(parent, true)
+        // Reject same-provider destination aliases and descendants before creating anything.
+        val seen = HashSet<String>()
+        val queue = ArrayDeque<Pair<Entry, Int>>()
+        val plan = LinkedHashMap<Entry, List<Entry>>()
+        queue.add(entry to 0)
+        var count = 0
+        while (queue.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            val (folder, depth) = queue.removeFirst()
+            check(depth <= 32 && ++count <= 10000) { "Directory copy limit exceeded" }
+            check(seen.add(D.getDocumentId(folder.uri))) { "Directory cycle detected" }
+            check(folder.uri.authority != parent.authority || D.getDocumentId(folder.uri) != D.getDocumentId(parent)) { "Cannot copy into source directory" }
+            val items = children(folder.uri)
+            check(items.size <= 10000 - count) { "Directory copy limit exceeded" }
+            count += items.count { !it.directory }
+            plan[folder] = items
+            items.filter { it.directory }.forEach { queue.add(it to depth + 1) }
+            check(queue.size <= 10000 - count) { "Directory copy limit exceeded" }
+        }
+        check(children(parent).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
+        val target = create(parent, entry.name)
+        val destinations = HashMap<Uri, Uri>()
+        destinations[entry.uri] = target
+        var total = 0L
+        try {
+            for ((folder, items) in plan) {
+                coroutineContext.ensureActive()
+                val destination = checkNotNull(destinations[folder.uri])
+                for (item in items) {
+                    coroutineContext.ensureActive()
+                    revalidate(item)
+                    if (item.directory) {
+                        check(children(destination).none { it.name.equals(item.name, ignoreCase = true) })
+                        destinations[item.uri] = create(destination, item.name)
+                    } else {
+                        transfer(item, destination, false) { progress(Math.addExact(total, it)) }
+                        if (item.size >= 0) total = Math.addExact(total, item.size)
+                    }
+                }
+            }
+            target
+        } catch (e: Exception) {
+            // Preserve completed files; provider recursive deletion is not guaranteed safe.
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            throw IllegalStateException("Directory copy incomplete; destination may contain copied files", e)
+        }
+    }
     suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         requireGrant(entry.uri, move)
         requireGrant(parent, true)

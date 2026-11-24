@@ -61,3 +61,5 @@ CI 45438969655 passed. Consolidated SAF provider navigation into the main explor
 CI 45440710021 failed WrongConstant on persistable permission flags. Fixed explicit read or read/write constants, no lint suppression. Added StorageManager volume inventory and media mount/unmount observation, grant revalidation in SAF backend, metadata revalidation for rename/delete and cancellable directory iteration. Volume inventory is informational, access still requires SAF grant. New CI pending.
 
 CI 45441684731 passed. Added volume-specific official SAF picker on API 29+ with generic fallback below 29, directory selection/open/rename and empty-only deletion. Directory copy/move intentionally disabled until safe recursive transfer implementation. New CI pending.
+
+CI 45443447249 passed. Added bounded recursive SAF directory copy with preflight tree traversal, same-provider document ID descendant rejection, cycle/depth/count checks, no overwrite and per-file verified transfer. Partial completed copies preserved on failure/cancellation. Directory move remains disabled; provider aliases and concurrent changes cannot be fully excluded. New CI pending.

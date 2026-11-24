@@ -168,9 +168,11 @@ class MainActivity : ComponentActivity() {
                         transferred = 0
                         transferJob = scope.launch {
                             try {
-                                storage.transfer(pending.first, destination, pending.second) { bytes ->
+                                val report: (Long) -> Unit = { bytes ->
                                     if (bytes - transferred >= 1024 * 1024) transferred = bytes
                                 }
+                                if (pending.first.directory) storage.copyDirectory(pending.first, destination, report)
+                                else storage.transfer(pending.first, destination, pending.second, report)
                                 clipboard = null
                             } catch (e: CancellationException) { throw e }
                             catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
@@ -207,7 +209,7 @@ class MainActivity : ComponentActivity() {
                                 .setPositiveButton("Delete") { _, _ -> mutate { storage.delete(item) } }.show()
                         }) { Text("Delete") }
                     }
-                    Button(enabled = !mutating && !item.directory, onClick = { clipboard = item to false; selected = null }) { Text("Copy") }
+                    Button(enabled = !mutating, onClick = { clipboard = item to false; selected = null }) { Text("Copy") }
                     if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
                         Button(enabled = !mutating && !item.directory, onClick = { clipboard = item to true; selected = null }) { Text("Move") }
                     }
