@@ -176,30 +176,52 @@ class Storage(private val resolver: ContentResolver) {
         var budget = 512L * 1024 * 1024
         for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }) {
             if (group.size < 2) continue
-            val hashes = mutableMapOf<String, MutableList<Entry>>()
-            for (entry in group) {
-                coroutineContext.ensureActive()
-                if (size > budget) { limited = true; continue }
-                try {
-                    val md = MessageDigest.getInstance("SHA-256")
-                    var read = 0L
-                    checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            read += n
-                            budget -= n
-                            check(budget >= 0 && read <= size)
-                            md.update(buffer, 0, n)
+            // Stage 1: progressive 64 KiB prefix sample hash for files larger than 128 KiB to avoid exhausting hash budget on distinct large files.
+            val candidateGroups = if (size > 128 * 1024L) {
+                val sampleGroups = mutableMapOf<String, MutableList<Entry>>()
+                val sampleSize = 64 * 1024
+                for (entry in group) {
+                    coroutineContext.ensureActive()
+                    if (sampleSize > budget) { limited = true; continue }
+                    try {
+                        val prefixHash = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                            sampledPrefixSha256(input, sampleSize) { coroutineContext.ensureActive() }
                         }
-                    }
-                    check(read == size)
-                    val hash = android.util.Base64.encodeToString(md.digest(), android.util.Base64.NO_WRAP)
-                    hashes.getOrPut(hash) { mutableListOf() }.add(entry)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                        budget -= sampleSize
+                        sampleGroups.getOrPut(prefixHash) { mutableListOf() }.add(entry)
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                }
+                sampleGroups.values.filter { it.size > 1 }
+            } else {
+                listOf(group)
             }
-            duplicates.addAll(hashes.values.filter { it.size > 1 })
+            // Stage 2: full SHA-256 verification only for entries whose size and prefix sample matched.
+            for (candidates in candidateGroups) {
+                val hashes = mutableMapOf<String, MutableList<Entry>>()
+                for (entry in candidates) {
+                    coroutineContext.ensureActive()
+                    if (size > budget) { limited = true; continue }
+                    try {
+                        val md = MessageDigest.getInstance("SHA-256")
+                        var read = 0L
+                        checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                read += n
+                                budget -= n
+                                check(budget >= 0 && read <= size)
+                                md.update(buffer, 0, n)
+                            }
+                        }
+                        check(read == size)
+                        val hash = android.util.Base64.encodeToString(md.digest(), android.util.Base64.NO_WRAP)
+                        hashes.getOrPut(hash) { mutableListOf() }.add(entry)
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                }
+                duplicates.addAll(hashes.values.filter { it.size > 1 })
+            }
         }
         ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures, (files.filter { cleanupReason(it.name) != null } + emptyFolders).distinctBy { it.uri })
     }
@@ -399,6 +421,21 @@ internal fun cleanupReason(name: String): String? = when (name.substringAfterLas
     "part", "partial", "crdownload" -> "Possible incomplete download"
     "apk" -> "APK installer"
     else -> null
+}
+
+internal inline fun sampledPrefixSha256(input: java.io.InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): String {
+    require(maxBytes > 0)
+    val md = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(minOf(maxBytes, 16 * 1024))
+    var remaining = maxBytes
+    while (remaining > 0) {
+        checkCancellation()
+        val n = input.read(buffer, 0, minOf(buffer.size, remaining))
+        if (n <= 0) break
+        md.update(buffer, 0, n)
+        remaining -= n
+    }
+    return md.digest().joinToString("") { "%02x".format(it) }
 }
 
 internal inline fun equalStreams(a: java.io.InputStream, b: java.io.InputStream, expected: Long, checkCancellation: () -> Unit): Boolean {

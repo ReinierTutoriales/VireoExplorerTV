@@ -508,62 +508,120 @@ class MainActivity : ComponentActivity() {
         }
         LaunchedEffect(parent, actionsOpen) { primaryFocus.requestFocus() }
         BackHandler { backFromFolder() }
-        Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (!actionsOpen) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+        val item = model.selected
+        if (item != null) {
+            val actionFocus = remember { FocusRequester() }
+            val colors = MaterialTheme.colorScheme
+            LaunchedEffect(item.uri) { actionFocus.requestFocus() }
+            androidx.compose.ui.window.Dialog(onDismissRequest = { model.selected = null }) {
+                Surface(
+                    shape = VireoCardShape,
+                    colors = SurfaceDefaults.colors(
+                        containerColor = colors.surface,
+                        contentColor = colors.onSurface
+                    ),
+                    border = Border(androidx.compose.foundation.BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
                 ) {
-                    OutlinedButton(modifier = Modifier.focusRequester(primaryFocus),
-                        enabled = !model.mutating, onClick = ::backFromFolder) { Text("Back") }
-                    Column(Modifier.weight(1f)) {
-                        Text(model.path.last().second, style = MaterialTheme.typography.headlineSmall,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (model.path.size > 1) {
-                            Text(model.path.dropLast(1).joinToString(" / ") { it.second },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(
+                        modifier = Modifier.widthIn(min = 420.dp, max = 560.dp).padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(item.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (item.size >= 0) android.text.format.Formatter.formatFileSize(this@MainActivity, item.size) else item.mime,
+                            color = colors.onSurfaceVariant
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                modifier = Modifier.focusRequester(actionFocus),
+                                enabled = !model.mutating,
+                                onClick = { model.selected = null }
+                            ) { Text("Back to files") }
+                            Button(enabled = !model.mutating, onClick = { model.selected = null; openEntry(item) }) {
+                                Text(if (!item.directory && FileCategory.APK.matches(item)) "Install APK" else "Open")
+                            }
+                            if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
+                                Button(enabled = !model.mutating, onClick = { model.selected = null; renameItemDialog = item }) { Text("Rename") }
+                            }
+                            if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
+                                Button(enabled = !model.mutating, onClick = { model.selected = null; deleteItemDialog = item }) { Text("Delete") }
+                            }
+                            if (writable) {
+                                Button(enabled = !model.mutating, onClick = { model.selected = null; createZipItemDialog = item }) { Text("Create ZIP") }
+                            }
+                            if (writable && !item.directory && item.name.endsWith(".zip", true)) {
+                                Button(enabled = !model.mutating, onClick = { model.selected = null; extractZipItemDialog = item }) { Text("Extract ZIP") }
+                            }
+                            Button(enabled = !model.mutating, onClick = { model.clipboard = listOf(item) to false; model.selected = null }) { Text("Copy") }
+                            if (writable && (if (item.directory) item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0)) {
+                                Button(
+                                    enabled = !model.mutating && (!item.directory || item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0),
+                                    onClick = { model.clipboardParent = parent; model.clipboard = listOf(item) to true; model.selected = null }
+                                ) { Text("Move") }
+                            }
                         }
-                    }
-                    IconButton(enabled = !model.mutating,
-                        onClick = { showFolderSearchDialog = true }) {
-                        ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
-                    }
-                    OutlinedButton(enabled = !model.mutating, onClick = { folderActions = !folderActions }) {
-                        Text(if (folderActions) "Hide tools" else "Folder tools")
-                    }
-                }
-                if (folderActions) FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val isFavorite = parent.toString() in settings.favorites
-                    OutlinedButton(enabled = !model.mutating, onClick = { model.error = null; model.revision++ }) { Text("Refresh") }
-                    ExplorerOption(
-                        selected = isFavorite,
-                        enabled = !model.mutating,
-                        onClick = { updateSettings { preferences.toggleFavorite(parent.toString()) } },
-                        leadingIcon = { ExplorerIcon(R.drawable.symbol_star) }
-                    ) { Text(stringResource(R.string.explorer_favorites)) }
-                    OutlinedButton(enabled = !model.mutating, onClick = { updateSettings { preferences.toggleGrid() } }) {
-                        Text(stringResource(if (gridView) R.string.explorer_list else R.string.explorer_grid))
-                    }
-                    OutlinedButton(enabled = !model.mutating, onClick = { updateSettings { preferences.nextSort() } }) { Text(sortLabels[sortIndex]) }
-                    OutlinedButton(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
-                    OutlinedButton(enabled = !model.mutating && !model.busy, onClick = {
-                        model.multi = !model.multi
-                        model.marked = emptySet()
-                        folderActions = false
-                        primaryFocus.requestFocus()
-                    }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
-                    Button(enabled = writable && !model.mutating && !model.busy,
-                        onClick = { showNewFolderDialog = true }) {
-                        Text("New folder")
                     }
                 }
             }
-            if (!actionsOpen && (category != null || homeSearch.isNotEmpty() || model.search.isNotEmpty())) {
+        }
+
+        Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(modifier = Modifier.focusRequester(primaryFocus),
+                    enabled = !model.mutating, onClick = ::backFromFolder) { Text("Back") }
+                Column(Modifier.weight(1f)) {
+                    Text(model.path.last().second, style = MaterialTheme.typography.headlineSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (model.path.size > 1) {
+                        Text(model.path.dropLast(1).joinToString(" / ") { it.second },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                IconButton(enabled = !model.mutating,
+                    onClick = { showFolderSearchDialog = true }) {
+                    ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
+                }
+                OutlinedButton(enabled = !model.mutating, onClick = { folderActions = !folderActions }) {
+                    Text(if (folderActions) "Hide tools" else "Folder tools")
+                }
+            }
+            if (folderActions) FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val isFavorite = parent.toString() in settings.favorites
+                OutlinedButton(enabled = !model.mutating, onClick = { model.error = null; model.revision++ }) { Text("Refresh") }
+                ExplorerOption(
+                    selected = isFavorite,
+                    enabled = !model.mutating,
+                    onClick = { updateSettings { preferences.toggleFavorite(parent.toString()) } },
+                    leadingIcon = { ExplorerIcon(R.drawable.symbol_star) }
+                ) { Text(stringResource(R.string.explorer_favorites)) }
+                OutlinedButton(enabled = !model.mutating, onClick = { updateSettings { preferences.toggleGrid() } }) {
+                    Text(stringResource(if (gridView) R.string.explorer_list else R.string.explorer_grid))
+                }
+                OutlinedButton(enabled = !model.mutating, onClick = { updateSettings { preferences.nextSort() } }) { Text(sortLabels[sortIndex]) }
+                OutlinedButton(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
+                OutlinedButton(enabled = !model.mutating && !model.busy, onClick = {
+                    model.multi = !model.multi
+                    model.marked = emptySet()
+                    folderActions = false
+                    primaryFocus.requestFocus()
+                }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
+                Button(enabled = writable && !model.mutating && !model.busy,
+                    onClick = { showNewFolderDialog = true }) {
+                    Text("New folder")
+                }
+            }
+            if (category != null || homeSearch.isNotEmpty() || model.search.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     category?.let { active ->
@@ -617,108 +675,77 @@ class MainActivity : ComponentActivity() {
                     Button(enabled = !model.mutating && writable && batch.isNotEmpty() && batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }) { Text("Move selected") }
                 }
             }
-            val item = model.selected
-            if (item != null) Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(item.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(modifier = Modifier.focusRequester(primaryFocus),
-                        enabled = !model.mutating, onClick = ::backFromFolder) { Text("Back to files") }
-                    Button(enabled = !model.mutating, onClick = { openEntry(item) }) {
-                        Text(if (!item.directory && FileCategory.APK.matches(item)) "Install APK" else "Open")
-                    }
-                    if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
-                        Button(enabled = !model.mutating, onClick = { renameItemDialog = item }) { Text("Rename") }
-                    }
-                    if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !model.mutating, onClick = { deleteItemDialog = item }) { Text("Delete") }
-                    }
-                    if (writable) {
-                        Button(enabled = !model.mutating, onClick = { createZipItemDialog = item }) { Text("Create ZIP") }
-                    }
-                    if (writable && !item.directory && item.name.endsWith(".zip", true)) {
-                        Button(enabled = !model.mutating, onClick = { extractZipItemDialog = item }) { Text("Extract ZIP") }
-                    }
-                    Button(enabled = !model.mutating, onClick = { model.clipboard = listOf(item) to false; model.selected = null }) { Text("Copy") }
-                    if (writable && (if (item.directory) item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0)) {
-                        Button(enabled = !model.mutating && (!item.directory || item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0), onClick = { model.clipboardParent = parent; model.clipboard = listOf(item) to true; model.selected = null }) { Text("Move") }
-                    }
+            val visible = remember(model.entries, model.search, category, homeSearch, sortIndex) {
+                val names = compareBy<Entry, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name }
+                val order = when (sortIndex) {
+                    1 -> names.reversed()
+                    2 -> compareByDescending<Entry> { it.size }.then(names)
+                    3 -> compareBy<Entry> { if (it.size < 0) Long.MAX_VALUE else it.size }.then(names)
+                    else -> names
+                }
+                model.entries.filter(::matchesFilter)
+                    .sortedWith(compareBy<Entry> { !it.directory }.then(order))
+            }
+            val select: (Entry) -> Unit = { entry ->
+                if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri
+                else openEntry(entry)
+            }
+            if (!model.busy && visible.isEmpty() && model.error == null) {
+                Text(when {
+                    model.search.isNotEmpty() || homeSearch.isNotEmpty() -> "No files match your search."
+                    category != null -> stringResource(R.string.explorer_no_category_files)
+                    else -> "This folder is empty."
+                })
+            }
+            if (visible.isNotEmpty() && !model.multi) Text("Press OK to open. Hold OK for file actions.")
+            val entryFocus = remember { FocusRequester() }
+            val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
+            val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
+            LaunchedEffect(parent, restoreIndex, gridView) {
+                if (restoreIndex >= 0) {
+                    if (gridView) gridState.scrollToItem(restoreIndex)
+                    else listState.scrollToItem(restoreIndex)
+                }
+            }
+            val renderEntry: @Composable (Entry) -> Unit = { entry ->
+                val restoring = entry.uri == restoreEntry
+                if (restoring) LaunchedEffect(entry.uri, model.busy) {
+                    if (!model.busy && entryFocus.requestFocus()) returnEntries.remove(parent)
+                }
+                val action = if (model.multi) null else ({
+                    returnEntries[parent] = entry.uri
+                    folderActions = false
+                    model.selected = entry
+                })
+                FolderEntry(
+                    entry = entry,
+                    revision = model.revision,
+                    grid = gridView,
+                    selected = model.multi && entry.uri in model.marked,
+                    enabled = !model.mutating && !model.busy,
+                    onClick = { select(entry) },
+                    onLongClick = action,
+                    modifier = Modifier.fillMaxWidth().then(
+                        if (restoring) Modifier.focusRequester(entryFocus) else Modifier
+                    )
+                )
+            }
+            val padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+            if (gridView) {
+                LazyVerticalGrid(
+                    state = gridState, columns = GridCells.Adaptive(180.dp),
+                    modifier = Modifier.weight(1f).focusRestorer(), contentPadding = padding,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
                 }
             } else {
-                val visible = remember(model.entries, model.search, category, homeSearch, sortIndex) {
-                    val names = compareBy<Entry, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name }
-                    val order = when (sortIndex) {
-                        1 -> names.reversed()
-                        2 -> compareByDescending<Entry> { it.size }.then(names)
-                        3 -> compareBy<Entry> { if (it.size < 0) Long.MAX_VALUE else it.size }.then(names)
-                        else -> names
-                    }
-                    model.entries.filter(::matchesFilter)
-                        .sortedWith(compareBy<Entry> { !it.directory }.then(order))
-                }
-                val select: (Entry) -> Unit = { entry ->
-                    if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri
-                    else openEntry(entry)
-                }
-                if (!model.busy && visible.isEmpty() && model.error == null) {
-                    Text(when {
-                        model.search.isNotEmpty() || homeSearch.isNotEmpty() -> "No files match your search."
-                        category != null -> stringResource(R.string.explorer_no_category_files)
-                        else -> "This folder is empty."
-                    })
-                }
-                if (visible.isNotEmpty() && !model.multi) Text("Press OK to open. Hold OK for file actions.")
-                val entryFocus = remember { FocusRequester() }
-                val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
-                val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
-                LaunchedEffect(parent, restoreIndex, gridView) {
-                    if (restoreIndex >= 0) {
-                        if (gridView) gridState.scrollToItem(restoreIndex)
-                        else listState.scrollToItem(restoreIndex)
-                    }
-                }
-                val renderEntry: @Composable (Entry) -> Unit = { entry ->
-                    val restoring = entry.uri == restoreEntry
-                    if (restoring) LaunchedEffect(entry.uri, model.busy) {
-                        if (!model.busy && entryFocus.requestFocus()) returnEntries.remove(parent)
-                    }
-                    val action = if (model.multi) null else ({
-                        returnEntries[parent] = entry.uri
-                        folderActions = false
-                        model.selected = entry
-                    })
-                    FolderEntry(
-                        entry = entry,
-                        revision = model.revision,
-                        grid = gridView,
-                        selected = model.multi && entry.uri in model.marked,
-                        enabled = !model.mutating && !model.busy,
-                        onClick = { select(entry) },
-                        onLongClick = action,
-                        modifier = Modifier.fillMaxWidth().then(
-                            if (restoring) Modifier.focusRequester(entryFocus) else Modifier
-                        )
-                    )
-                }
-                val padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                if (gridView) {
-                    LazyVerticalGrid(
-                        state = gridState, columns = GridCells.Adaptive(180.dp),
-                        modifier = Modifier.weight(1f).focusRestorer(), contentPadding = padding,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
-                    }
-                } else {
-                    LazyColumn(
-                        Modifier.weight(1f).focusRestorer(), state = listState, contentPadding = padding,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
-                    }
+                LazyColumn(
+                    Modifier.weight(1f).focusRestorer(), state = listState, contentPadding = padding,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
                 }
             }
         }

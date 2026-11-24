@@ -204,6 +204,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
 
     var showConnectDialog by remember { mutableStateOf(false) }
     var newFolderDialog by remember { mutableStateOf(false) }
+    var actionTarget by remember { mutableStateOf<SmbEntry?>(null) }
     var renameTarget by remember { mutableStateOf<SmbEntry?>(null) }
     var deleteTarget by remember { mutableStateOf<SmbEntry?>(null) }
 
@@ -375,6 +376,73 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         )
     }
 
+    val selectedSmbItem = actionTarget
+    if (selectedSmbItem != null && server != null) {
+        val actionFocus = remember { FocusRequester() }
+        val colors = MaterialTheme.colorScheme
+        val remotePath = (path + selectedSmbItem.name).joinToString("\\")
+        val mime = mediaMime(selectedSmbItem.name)
+        val playable = !selectedSmbItem.directory && (mime.startsWith("video/") || mime.startsWith("audio/"))
+        val viewableImage = !selectedSmbItem.directory && mime.startsWith("image/")
+        val canDownload = !selectedSmbItem.directory && !loading && transfer == null && pending == null && selectedSmbItem.bytes >= 0
+        LaunchedEffect(selectedSmbItem.name) { actionFocus.requestFocus() }
+        Dialog(onDismissRequest = { actionTarget = null }) {
+            Surface(
+                shape = VireoCardShape,
+                colors = SurfaceDefaults.colors(
+                    containerColor = colors.surface,
+                    contentColor = colors.onSurface
+                ),
+                border = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
+            ) {
+                Column(
+                    modifier = Modifier.widthIn(min = 400.dp, max = 540.dp).padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(selectedSmbItem.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (!selectedSmbItem.directory && selectedSmbItem.bytes >= 0) {
+                        Text(android.text.format.Formatter.formatFileSize(context, selectedSmbItem.bytes), color = colors.onSurfaceVariant)
+                    }
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            modifier = Modifier.focusRequester(actionFocus),
+                            onClick = { actionTarget = null }
+                        ) { Text("Back") }
+                        if (selectedSmbItem.directory || playable || viewableImage) {
+                            Button(onClick = {
+                                actionTarget = null
+                                when {
+                                    selectedSmbItem.directory -> path = path + selectedSmbItem.name
+                                    playable -> playback = remotePath to selectedSmbItem
+                                    viewableImage -> imageViewing = remotePath to selectedSmbItem
+                                }
+                            }) { Text("Open") }
+                        }
+                        if (!selectedSmbItem.directory) {
+                            Button(enabled = canDownload, onClick = {
+                                actionTarget = null
+                                pending = remotePath to selectedSmbItem
+                                try { destination.launch(selectedSmbItem.name) }
+                                catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
+                            }) { Text("Download") }
+                        }
+                        Button(enabled = transfer == null && !loading, onClick = {
+                            actionTarget = null
+                            renameTarget = selectedSmbItem
+                        }) { Text("Rename") }
+                        Button(enabled = transfer == null && !loading, onClick = {
+                            actionTarget = null
+                            deleteTarget = selectedSmbItem
+                        }) { Text("Delete") }
+                    }
+                }
+            }
+        }
+    }
+
     val renaming = renameTarget
     if (renaming != null && activeSession != null) {
         val folder = path.toList()
@@ -499,6 +567,8 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         if (loading) Text("Connecting…")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (server != null && !loading && error == null && entries.isEmpty()) Text("This share folder is empty.")
+        if (entries.isNotEmpty()) Text("Press OK to open. Hold OK for file actions.")
+        val focusBorder = Border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), shape = VireoCardShape)
         LazyColumn(Modifier.weight(1f).focusRestorer(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.name }, contentType = { if (it.directory) "folder" else "file" }) { entry ->
                 val mime = mediaMime(entry.name)
@@ -515,44 +585,36 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     try { destination.launch(entry.name) }
                     catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    DenseListItem(
-                        selected = false,
-                        enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            when {
-                                entry.directory -> path = path + entry.name
-                                playable -> playback = remotePath to entry
-                                viewableImage -> imageViewing = remotePath to entry
-                                else -> download()
-                            }
-                        },
-                        headlineContent = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = {
-                            ExplorerIcon(when {
-                                entry.directory -> R.drawable.symbol_folder
-                                video -> R.drawable.symbol_movie
-                                audio -> R.drawable.symbol_music_note
-                                image -> R.drawable.symbol_image
-                                else -> R.drawable.symbol_description
-                            })
-                        },
-                        trailingContent = if (!entry.directory && entry.bytes >= 0) {
-                            { Text(android.text.format.Formatter.formatFileSize(context, entry.bytes)) }
-                        } else null
-                    )
-                    if (playable || viewableImage) OutlinedButton(enabled = canDownload, onClick = ::download) { Text("Download") }
-                    Button(enabled = server != null && transfer == null && !loading, onClick = { renameTarget = entry }) {
-                        Text("Rename")
-                    }
-                    Button(enabled = server != null && transfer == null && !loading, onClick = { deleteTarget = entry }) {
-                        Text("Delete")
-                    }
-                }
+                DenseListItem(
+                    selected = false,
+                    enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ListItemDefaults.shape(VireoCardShape),
+                    border = ListItemDefaults.border(focusedBorder = focusBorder, focusedSelectedBorder = focusBorder),
+                    scale = ListItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f),
+                    onClick = {
+                        when {
+                            entry.directory -> path = path + entry.name
+                            playable -> playback = remotePath to entry
+                            viewableImage -> imageViewing = remotePath to entry
+                            else -> download()
+                        }
+                    },
+                    onLongClick = if (entryAvailable) ({ actionTarget = entry }) else null,
+                    headlineContent = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                    leadingContent = {
+                        ExplorerIcon(when {
+                            entry.directory -> R.drawable.symbol_folder
+                            video -> R.drawable.symbol_movie
+                            audio -> R.drawable.symbol_music_note
+                            image -> R.drawable.symbol_image
+                            else -> R.drawable.symbol_description
+                        })
+                    },
+                    trailingContent = if (!entry.directory && entry.bytes >= 0) {
+                        { Text(android.text.format.Formatter.formatFileSize(context, entry.bytes)) }
+                    } else null
+                )
             }
         }
     }

@@ -153,7 +153,10 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         fun start() {
             if (active != null) return
-            val builder = ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true)).setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000)
+            val builder = ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+                .setSeekBackIncrementMs(10000)
+                .setSeekForwardIncrementMs(10000)
+                .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS)
             if (sourceFactory != null) builder.setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(sourceFactory))
             val p = builder.build()
             active = p
@@ -211,12 +214,52 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         else onClose()
     }
     Box(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event ->
-        if (!controlsVisible && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
-            if (event.type == KeyEventType.KeyUp) { controlsVisible = true; interaction++ }
-            true
-        } else {
-            if (event.type == KeyEventType.KeyDown) interaction++
-            false
+        val p = player
+        when (event.key) {
+            Key.MediaPlayPause -> {
+                if (event.type == KeyEventType.KeyUp) {
+                    p?.let { if (it.isPlaying) it.pause() else it.play() }
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            }
+            Key.MediaPlay -> {
+                if (event.type == KeyEventType.KeyUp) { p?.play(); controlsVisible = true; interaction++ }
+                true
+            }
+            Key.MediaPause -> {
+                if (event.type == KeyEventType.KeyUp) { p?.pause(); controlsVisible = true; interaction++ }
+                true
+            }
+            Key.MediaFastForward -> {
+                if (event.type == KeyEventType.KeyUp) {
+                    if (p?.isCurrentMediaItemSeekable == true) p.seekForward()
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            }
+            Key.MediaRewind -> {
+                if (event.type == KeyEventType.KeyUp) {
+                    if (p?.isCurrentMediaItemSeekable == true) p.seekBack()
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            }
+            else -> if (!controlsVisible && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+                if (event.type == KeyEventType.KeyUp) {
+                    if (event.key == Key.DirectionLeft && p?.isCurrentMediaItemSeekable == true) p.seekBack()
+                    else if (event.key == Key.DirectionRight && p?.isCurrentMediaItemSeekable == true) p.seekForward()
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            } else {
+                if (event.type == KeyEventType.KeyDown) interaction++
+                false
+            }
         }
     }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply {

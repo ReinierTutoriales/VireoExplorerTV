@@ -5,11 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
 import android.os.Build
+import android.widget.ImageView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,7 +26,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.tv.material3.Button
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
@@ -37,6 +41,11 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
 private const val MAX_IMAGE_STREAM_BYTES = 32 * 1024 * 1024
+
+internal sealed interface DecodedVisual {
+    data class Static(val bitmap: Bitmap) : DecodedVisual
+    data class Animated(val drawable: Drawable) : DecodedVisual
+}
 
 internal fun sampleSize(width: Int, height: Int, maxWidth: Int, maxHeight: Int): Int {
     require(width > 0 && height > 0 && maxWidth > 0 && maxHeight > 0)
@@ -102,39 +111,41 @@ private fun decodeSampledBytes(bytes: ByteArray, width: Int, height: Int): Bitma
     return applyExifOrientation(decoded, orientation)
 }
 
+@androidx.annotation.RequiresApi(28)
+private fun decodeSourceVisual(source: ImageDecoder.Source, width: Int, height: Int): DecodedVisual {
+    val listener = ImageDecoder.OnHeaderDecodedListener { decoder, info, _ ->
+        val w = info.size.width
+        val h = info.size.height
+        require(w > 0 && h > 0)
+        val scale = minOf(1.0, width.toDouble() / w, height.toDouble() / h)
+        decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
+    }
+    val drawable = ImageDecoder.decodeDrawable(source, listener)
+    return if (drawable is AnimatedImageDrawable) DecodedVisual.Animated(drawable)
+    else DecodedVisual.Static(ImageDecoder.decodeBitmap(source, listener))
+}
+
 private suspend fun decode(
     resolver: ContentResolver?,
     entry: Entry,
     width: Int,
     height: Int,
     openStream: (suspend (Entry) -> InputStream)? = null
-): Bitmap = withContext(Dispatchers.IO) {
+): DecodedVisual = withContext(Dispatchers.IO) {
     if (openStream != null) {
         val bytes = openStream(entry).use { readBoundedImageBytes(it) }
         if (Build.VERSION.SDK_INT >= 28) {
-            ImageDecoder.decodeBitmap(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes))) { decoder, info, _ ->
-                val w = info.size.width
-                val h = info.size.height
-                require(w > 0 && h > 0)
-                val scale = minOf(1.0, width.toDouble() / w, height.toDouble() / h)
-                decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
-            }
+            decodeSourceVisual(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), width, height)
         } else {
-            decodeSampledBytes(bytes, width, height)
+            DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
         }
     } else {
         val contentResolver = checkNotNull(resolver)
         if (Build.VERSION.SDK_INT >= 28) {
-            ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, entry.uri)) { decoder, info, _ ->
-                val w = info.size.width
-                val h = info.size.height
-                require(w > 0 && h > 0)
-                val scale = minOf(1.0, width.toDouble() / w, height.toDouble() / h)
-                decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
-            }
+            decodeSourceVisual(ImageDecoder.createSource(contentResolver, entry.uri), width, height)
         } else {
             val bytes = checkNotNull(contentResolver.openInputStream(entry.uri)).use { readBoundedImageBytes(it) }
-            decodeSampledBytes(bytes, width, height)
+            DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
         }
     }
 }
@@ -197,14 +208,21 @@ internal fun ImageViewer(
         val density = LocalDensity.current
         val width = with(density) { maxWidth.roundToPx() }.coerceIn(1, 3840)
         val height = with(density) { maxHeight.roundToPx() }.coerceIn(1, 2160)
-        var bitmap by remember(current.uri) { mutableStateOf<Bitmap?>(null) }
+        var visual by remember(current.uri) { mutableStateOf<DecodedVisual?>(null) }
         var error by remember(current.uri) { mutableStateOf<String?>(null) }
         LaunchedEffect(current.uri, width, height) {
-            bitmap = null
+            visual = null
             error = null
-            try { bitmap = decode(resolver, current, width, height, openStream) }
+            try { visual = decode(resolver, current, width, height, openStream) }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = e.localizedMessage ?: "Cannot decode image" }
+        }
+        LifecycleStartEffect(visual) {
+            val anim = (visual as? DecodedVisual.Animated)?.drawable
+            if (Build.VERSION.SDK_INT >= 28 && anim is AnimatedImageDrawable) anim.start()
+            onStopOrDispose {
+                if (Build.VERSION.SDK_INT >= 28 && anim is AnimatedImageDrawable) anim.stop()
+            }
         }
         Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -213,20 +231,36 @@ internal fun ImageViewer(
                 overflow = TextOverflow.Ellipsis
             )
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                val image = bitmap
-                if (image != null) Image(
-                    image.asImageBitmap(),
-                    current.name,
-                    Modifier.fillMaxSize().graphicsLayer {
-                        scaleX = zoom
-                        scaleY = zoom
-                        rotationZ = rotation
-                        translationX = if (zoom > 1f) panX else 0f
-                        translationY = if (zoom > 1f) panY else 0f
-                    },
-                    contentScale = ContentScale.Fit
-                )
-                else Text(error ?: "Loading image…")
+                val decoded = visual
+                val transformModifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                    rotationZ = rotation
+                    translationX = if (zoom > 1f) panX else 0f
+                    translationY = if (zoom > 1f) panY else 0f
+                }
+                when (decoded) {
+                    is DecodedVisual.Static -> Image(
+                        decoded.bitmap.asImageBitmap(),
+                        current.name,
+                        transformModifier,
+                        contentScale = ContentScale.Fit
+                    )
+                    is DecodedVisual.Animated -> AndroidView(
+                        factory = { ctx ->
+                            ImageView(ctx).apply {
+                                isFocusable = false
+                                scaleType = ImageView.ScaleType.FIT_CENTER
+                            }
+                        },
+                        update = { view ->
+                            if (view.drawable !== decoded.drawable) view.setImageDrawable(decoded.drawable)
+                        },
+                        onRelease = { view -> view.setImageDrawable(null) },
+                        modifier = transformModifier
+                    )
+                    null -> Text(error ?: "Loading image…")
+                }
             }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -247,19 +281,19 @@ internal fun ImageViewer(
                     }
                 }
                 Button(
-                    enabled = bitmap != null && zoom > 1f,
+                    enabled = visual != null && zoom > 1f,
                     onClick = {
                         zoom = (zoom - .5f).coerceAtLeast(1f)
                         if (zoom == 1f) { panX = 0f; panY = 0f }
                     }
                 ) { Text("Zoom −") }
                 Button(
-                    enabled = bitmap != null && zoom < 3f,
+                    enabled = visual != null && zoom < 3f,
                     onClick = { zoom = (zoom + .5f).coerceAtMost(3f) }
                 ) { Text("Zoom +") }
-                Button(enabled = bitmap != null, onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate") }
+                Button(enabled = visual != null, onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate") }
                 Button(
-                    enabled = bitmap != null,
+                    enabled = visual != null,
                     onClick = { zoom = 1f; rotation = 0f; panX = 0f; panY = 0f }
                 ) { Text("Reset") }
             }
