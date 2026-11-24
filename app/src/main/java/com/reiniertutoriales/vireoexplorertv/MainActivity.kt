@@ -40,7 +40,9 @@ class MainActivity : ComponentActivity() {
         var revision by remember { mutableIntStateOf(0) }
         var selected by remember { mutableStateOf<Entry?>(null) }
         var viewing by remember { mutableStateOf<Entry?>(null) }
-        var clipboard by remember { mutableStateOf<Pair<Entry, Boolean>?>(null) }
+        var clipboard by remember { mutableStateOf<Pair<List<Entry>, Boolean>?>(null) }
+        var multi by remember { mutableStateOf(false) }
+        var marked by remember { mutableStateOf<Set<Uri>>(emptySet()) }
         var transferJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
         var transferred by remember { mutableLongStateOf(0L) }
         var search by remember { mutableStateOf("") }
@@ -95,6 +97,8 @@ class MainActivity : ComponentActivity() {
         val writable = roots.any { it in writableRoots && storage.root(it) == path.firstOrNull()?.first }
         LaunchedEffect(parent, revision) {
             search = ""
+            multi = false
+            marked = emptySet()
             entries = emptyList()
             selected = null
             if (parent != null) {
@@ -128,9 +132,9 @@ class MainActivity : ComponentActivity() {
             ImageViewer(image, contentResolver, onClose = { viewing = null })
             return
         }
-        BackHandler(mutating || selected != null || path.isNotEmpty()) {
+        BackHandler(mutating || multi || selected != null || path.isNotEmpty()) {
             if (mutating) return@BackHandler
-            if(selected != null) selected = null else path = path.dropLast(1)
+            if (multi) { multi = false; marked = emptySet() } else if(selected != null) selected = null else path = path.dropLast(1)
         }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
@@ -146,6 +150,7 @@ class MainActivity : ComponentActivity() {
                     Button(enabled = !mutating, onClick = { revision++ }) { Text("Refresh") }
                     Button(enabled = !mutating && !busy, onClick = { scanOpen = true }) { Text("Analyze") }
                     Button(enabled = !mutating, onClick = { searchDialog(search) { search = it } }) { Text("Search") }
+                    Button(enabled = !mutating && !busy && selected == null, onClick = { multi = !multi; marked = emptySet() }) { Text(if (multi) "Cancel selection" else "Select multiple") }
                     Button(enabled = writable && !mutating && !busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
                 }
             }
@@ -161,7 +166,7 @@ class MainActivity : ComponentActivity() {
             val pending = clipboard
             if (pending != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text((if (pending.second) "Move: " else "Copy: ") + pending.first.name)
+                    Text((if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name })
                     Button(enabled = parent != null && writable && !mutating && !busy, onClick = {
                         val destination = parent ?: return@Button
                         mutating = true
@@ -171,8 +176,17 @@ class MainActivity : ComponentActivity() {
                                 val report: (Long) -> Unit = { bytes ->
                                     if (bytes - transferred >= 1024 * 1024) transferred = bytes
                                 }
-                                if (pending.first.directory) storage.copyDirectory(pending.first, destination, report)
-                                else storage.transfer(pending.first, destination, pending.second, report)
+                                var completed = 0
+                                for (entry in pending.first) {
+                                    transferred = 0
+                                    try {
+                                        if (entry.directory) storage.copyDirectory(entry, destination, report)
+                                        else storage.transfer(entry, destination, pending.second, report)
+                                        completed++
+                                        clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
+                                    } catch (e: CancellationException) { throw e }
+                                    catch (e: Exception) { throw IllegalStateException("$completed of ${pending.first.size} items completed: ${e.localizedMessage}", e) }
+                                }
                                 clipboard = null
                             } catch (e: CancellationException) { throw e }
                             catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
@@ -186,6 +200,15 @@ class MainActivity : ComponentActivity() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${transferred / 1024} KiB")
                     Button(onClick = { transferJob?.cancel() }) { Text("Cancel transfer") }
+                }
+            }
+            if (multi) {
+                val batch = entries.filter { it.uri in marked }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${batch.size} selected")
+                    Button(enabled = !mutating, onClick = { marked = entries.filter { it.name.contains(search, ignoreCase = true) }.map { it.uri }.toSet() }) { Text("Select all visible") }
+                    Button(enabled = !mutating && batch.isNotEmpty(), onClick = { clipboard = batch to false; multi = false; marked = emptySet() }) { Text("Copy selected") }
+                    Button(enabled = !mutating && writable && batch.isNotEmpty() && batch.all { !it.directory && it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { clipboard = batch to true; multi = false; marked = emptySet() }) { Text("Move selected") }
                 }
             }
             val item = selected
@@ -209,9 +232,9 @@ class MainActivity : ComponentActivity() {
                                 .setPositiveButton("Delete") { _, _ -> mutate { storage.delete(item) } }.show()
                         }) { Text("Delete") }
                     }
-                    Button(enabled = !mutating, onClick = { clipboard = item to false; selected = null }) { Text("Copy") }
+                    Button(enabled = !mutating, onClick = { clipboard = listOf(item) to false; selected = null }) { Text("Copy") }
                     if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !mutating && !item.directory, onClick = { clipboard = item to true; selected = null }) { Text("Move") }
+                        Button(enabled = !mutating && !item.directory, onClick = { clipboard = listOf(item) to true; selected = null }) { Text("Move") }
                     }
                     Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
                 }
@@ -233,8 +256,8 @@ class MainActivity : ComponentActivity() {
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(entries.filter { it.name.contains(search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
-                        Button(enabled = !mutating, onClick = { selected = entry }, modifier = Modifier.fillMaxWidth()) {
-                            Text((if(entry.directory) "▸  " else "") + entry.name)
+                        Button(enabled = !mutating, onClick = { if (multi) marked = if (entry.uri in marked) marked - entry.uri else marked + entry.uri else selected = entry }, modifier = Modifier.fillMaxWidth()) {
+                            Text((if (multi) { if (entry.uri in marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name)
                         }
                     }
                 }

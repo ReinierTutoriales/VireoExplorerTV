@@ -63,3 +63,5 @@ CI 45440710021 failed WrongConstant on persistable permission flags. Fixed expli
 CI 45441684731 passed. Added volume-specific official SAF picker on API 29+ with generic fallback below 29, directory selection/open/rename and empty-only deletion. Directory copy/move intentionally disabled until safe recursive transfer implementation. New CI pending.
 
 CI 45443447249 passed. Added bounded recursive SAF directory copy with preflight tree traversal, same-provider document ID descendant rejection, cycle/depth/count checks, no overwrite and per-file verified transfer. Partial completed copies preserved on failure/cancellation. Directory move remains disabled; provider aliases and concurrent changes cannot be fully excluded. New CI pending.
+
+CI 45444038075 passed. Added multi-selection, select visible, batch copy of files/directories and batch move of files only. Sequential verified transfers retain unfinished clipboard entries after partial failure; no bulk deletion. New CI pending.
