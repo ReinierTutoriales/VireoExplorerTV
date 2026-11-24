@@ -22,3 +22,6 @@ Mandatory native Jetpack Compose for TV and AndroidX TV Material, latest compati
 
 ## Licensing
 Project-owned code, assets and documentation are proprietary, all rights reserved. Do not relicense or publish source without owner authorization. Preserve third-party notices and license rights; verify compatibility with proprietary distribution before adding dependencies or upstream code. Flag copyleft obligations before integration. Repository visibility is a separate owner decision.
+
+## Engine specifications
+Read [docs/ENGINES.md](docs/ENGINES.md) before storage, media, network, cleaner or archive changes. Candidate libraries are not approved pins; verify compatibility, security, licensing and current stable releases before adoption.
