@@ -5,6 +5,10 @@ import android.net.Uri
 import android.provider.DocumentsContract as D
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.NonCancellable
+import java.security.MessageDigest
+import kotlin.coroutines.coroutineContext
 
 data class Entry(val uri: Uri, val name: String, val mime: String, val size: Long, val flags: Int) {
     val directory get() = mime == D.Document.MIME_TYPE_DIR
@@ -19,6 +23,56 @@ class Storage(private val resolver: ContentResolver) {
             buildList {
                 while (c.moveToNext()) add(Entry(D.buildDocumentUriUsingTree(parent, c.getString(0)), c.getString(1) ?: "Unnamed", c.getString(2) ?: "application/octet-stream", if(c.isNull(3)) -1 else c.getLong(3), c.getInt(4)))
             }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        }
+    }
+    suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
+        require(!entry.directory && validName(entry.name))
+        if (move) check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
+        check(children(parent).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
+        val target = checkNotNull(D.createDocument(resolver, parent, entry.mime, entry.name))
+        var verified = false
+        try {
+            check(target != entry.uri) { "Destination equals source" }
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(128 * 1024)
+            var total = 0L
+            checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        digest.update(buffer, 0, count)
+                        total += count
+                        progress(total)
+                    }
+                }
+            }
+            check(entry.size < 0 || total == entry.size) { "Source size changed" }
+            val expected = digest.digest()
+            suspend fun hash(uri: Uri): ByteArray {
+                val md = MessageDigest.getInstance("SHA-256")
+                checkNotNull(resolver.openInputStream(uri)).use { input ->
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        md.update(buffer, 0, count)
+                    }
+                }
+                return md.digest()
+            }
+            check(expected.contentEquals(hash(target))) { "Destination verification failed" }
+            if (move) check(expected.contentEquals(hash(entry.uri))) { "Source changed during transfer" }
+            coroutineContext.ensureActive()
+            verified = true
+            if (move) delete(entry)
+            target
+        } finally {
+            if (!verified && target != entry.uri) withContext(NonCancellable) {
+                check(D.deleteDocument(resolver, target)) { "Incomplete destination could not be removed" }
+            }
         }
     }
     suspend fun create(parent: Uri, name: String) = withContext(Dispatchers.IO) {

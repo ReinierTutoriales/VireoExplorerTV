@@ -40,6 +40,9 @@ class MainActivity : ComponentActivity() {
         var revision by remember { mutableIntStateOf(0) }
         var selected by remember { mutableStateOf<Entry?>(null) }
         var viewing by remember { mutableStateOf<Entry?>(null) }
+        var clipboard by remember { mutableStateOf<Pair<Entry, Boolean>?>(null) }
+        var transferJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+        var transferred by remember { mutableLongStateOf(0L) }
         var mutating by remember { mutableStateOf(false) }
         fun mutate(action: suspend () -> Unit) {
             if (mutating) return
@@ -99,6 +102,34 @@ class MainActivity : ComponentActivity() {
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if(busy) Text("Reading storage…")
             if(mutating) Text("Working…")
+            val pending = clipboard
+            if (pending != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text((if (pending.second) "Move: " else "Copy: ") + pending.first.name)
+                    Button(enabled = parent != null && !mutating && !busy, onClick = {
+                        val destination = parent ?: return@Button
+                        mutating = true
+                        transferred = 0
+                        transferJob = scope.launch {
+                            try {
+                                storage.transfer(pending.first, destination, pending.second) { bytes ->
+                                    if (bytes - transferred >= 1024 * 1024) transferred = bytes
+                                }
+                                clipboard = null
+                            } catch (e: CancellationException) { throw e }
+                            catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
+                            finally { mutating = false; transferJob = null; revision++ }
+                        }
+                    }) { Text("Paste") }
+                    Button(enabled = !mutating, onClick = { clipboard = null }) { Text("Clear") }
+                }
+            }
+            if (transferJob != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${transferred / 1024} KiB")
+                    Button(onClick = { transferJob?.cancel() }) { Text("Cancel transfer") }
+                }
+            }
             val item = selected
             if(item != null) {
                 Text(item.name)
@@ -118,6 +149,10 @@ class MainActivity : ComponentActivity() {
                                 .setMessage(item.name).setNegativeButton("Cancel", null)
                                 .setPositiveButton("Delete") { _, _ -> mutate { storage.delete(item) } }.show()
                         }) { Text("Delete") }
+                    }
+                    Button(enabled = !mutating, onClick = { clipboard = item to false; selected = null }) { Text("Copy") }
+                    if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
+                        Button(enabled = !mutating, onClick = { clipboard = item to true; selected = null }) { Text("Move") }
                     }
                     Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
                 }
