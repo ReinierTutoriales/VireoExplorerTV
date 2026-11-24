@@ -40,6 +40,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.common.Format
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.common.MediaMetadata
 import androidx.tv.material3.Button
@@ -85,6 +86,11 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     var metadata by remember(entry.uri) { mutableStateOf(MediaMetadata.EMPTY) }
     var captionSize by remember(entry.uri) { mutableIntStateOf(1) }
     val captionFractions = listOf(0.04f, 0.0533f, 0.07f)
+    val cinemaCaptionStyle = remember {
+        CaptionStyleCompat(0xFFFFE600.toInt(), android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            android.graphics.Color.BLACK, android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL))
+    }
     var showInfo by remember(entry.uri) { mutableStateOf(false) }
     var aspect by remember(entry.uri) { mutableIntStateOf(0) }
     var speedIndex by remember(entry.uri) { mutableIntStateOf(1) }
@@ -190,7 +196,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             useController = false
             isFocusable = false
             layoutParams = ViewGroup.LayoutParams(-1, -1)
-        } }, update = { it.player = player; it.keepScreenOn = playing; it.resizeMode = aspectModes[aspect]; it.subtitleView?.setFractionalTextSize(captionFractions[captionSize]) },
+        } }, update = { it.player = player; it.keepScreenOn = playing; it.resizeMode = aspectModes[aspect]; it.subtitleView?.apply {
+                setStyle(cinemaCaptionStyle)
+                setApplyEmbeddedStyles(false)
+                setApplyEmbeddedFontSizes(false)
+                setFractionalTextSize(captionFractions[captionSize])
+                setBottomPaddingFraction(0.08f)
+            } },
             onRelease = { it.player = null; it.keepScreenOn = false },
             modifier = Modifier.fillMaxSize())
         if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
