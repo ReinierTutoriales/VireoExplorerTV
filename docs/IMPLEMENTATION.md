@@ -55,3 +55,5 @@ CI 45434197304 passed. DNS-SD now retains original service information and uses 
 CI 45434880043 passed. Extracted reusable streaming SHA-256 transfer primitive and migrated SMB upload/download to it. Added unit tests for multi-buffer copy, hash mismatch and size mismatch. Local SAF migration remains pending. New CI pending.
 
 Migrated local SAF copy/move to the same bounded JCA SHA-256 streaming primitive as SMB. Preserved progress, destination verification and source recheck before deletion. No new dependencies. CI pending; provider operations are not atomic.
+
+CI 45438969655 passed. Consolidated SAF provider navigation into the main explorer; removed redundant NetworkBrowser. SAF picker now persists only returned read/write grants; refreshes grants on resume and gates write UI. Direct SMB remains separate. New CI pending; runtime grant revocation and picker compatibility require validation.

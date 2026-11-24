@@ -58,14 +58,35 @@ class MainActivity : ComponentActivity() {
                 finally { mutating = false }
             }
         }
-        val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) try {
-                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val uri = result.data?.data
+            if (result.resultCode == android.app.Activity.RESULT_OK && uri != null) try {
+                val granted = (result.data?.flags ?: 0) and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                check(granted and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) { "Read access not granted" }
+                contentResolver.takePersistableUriPermission(uri, granted)
                 roots = contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }
                 path = listOf(storage.root(uri) to "Storage")
             } catch (e: Exception) { error = e.localizedMessage ?: "Permission unavailable" }
         }
+        var writableRoots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()) }
+        DisposableEffect(Unit) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                    val grants = contentResolver.persistedUriPermissions
+                    roots = grants.filter { it.isReadPermission }.map { it.uri }
+                    writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
+                    if (path.isNotEmpty() && roots.none { storage.root(it) == path.first().first }) {
+                        path = emptyList(); selected = null; viewing = null; scanOpen = false
+                        error = "Storage access revoked"
+                    }
+                }
+            }
+            lifecycle.addObserver(observer)
+            onDispose { lifecycle.removeObserver(observer) }
+        }
+        LaunchedEffect(roots) { writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet() }
         val parent = path.lastOrNull()?.first
+        val writable = roots.any { it in writableRoots && storage.root(it) == path.firstOrNull()?.first }
         LaunchedEffect(parent, revision) {
             search = ""
             entries = emptyList()
@@ -84,7 +105,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (networkOpen) {
-            NetworkBrowser(onClose = { networkOpen = false })
+            SmbBrowser { networkOpen = false }
             return
         }
         if (appsOpen) {
@@ -109,17 +130,17 @@ class MainActivity : ComponentActivity() {
             Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
             Text(path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(enabled = !mutating, onClick = { try { picker.launch(null) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
+                Button(enabled = !mutating, onClick = { try { picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
                 if (parent == null) {
                     Button(enabled = !mutating, onClick = { appsOpen = true }) { Text("Apps & storage") }
-                    Button(enabled = !mutating, onClick = { networkOpen = true }) { Text("Network") }
+                    Button(enabled = !mutating, onClick = { networkOpen = true }) { Text("SMB network") }
                 }
                 if(parent != null) {
                     Button(enabled = !mutating, onClick = { path = path.dropLast(1) }) { Text("Back") }
                     Button(enabled = !mutating, onClick = { revision++ }) { Text("Refresh") }
                     Button(enabled = !mutating && !busy, onClick = { scanOpen = true }) { Text("Analyze") }
                     Button(enabled = !mutating, onClick = { searchDialog(search) { search = it } }) { Text("Search") }
-                    Button(enabled = !mutating && !busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
+                    Button(enabled = writable && !mutating && !busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
                 }
             }
             if (search.isNotEmpty()) {
@@ -135,7 +156,7 @@ class MainActivity : ComponentActivity() {
             if (pending != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text((if (pending.second) "Move: " else "Copy: ") + pending.first.name)
-                    Button(enabled = parent != null && !mutating && !busy, onClick = {
+                    Button(enabled = parent != null && writable && !mutating && !busy, onClick = {
                         val destination = parent ?: return@Button
                         mutating = true
                         transferred = 0
@@ -164,15 +185,15 @@ class MainActivity : ComponentActivity() {
                 Text(item.name)
                 Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = {
+                    Button(enabled = !mutating, onClick = {
                         if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) viewing = item
                         else try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         catch(e: Exception) { error = "No compatible viewer installed" }
                     }) { Text("Open") }
-                    if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
+                    if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
                         Button(enabled = !mutating, onClick = { nameDialog("Rename", item.name) { name -> mutate { storage.rename(item, name) } } }) { Text("Rename") }
                     }
-                    if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
+                    if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
                         Button(enabled = !mutating, onClick = {
                             AlertDialog.Builder(this@MainActivity).setTitle("Delete file?")
                                 .setMessage(item.name).setNegativeButton("Cancel", null)
