@@ -110,7 +110,7 @@ class MainActivity : ComponentActivity() {
         }
         val video = model.viewing?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
         if (video != null) {
-            MediaViewer(video, onClose = { model.viewing = null })
+            MediaViewer(video, sidecars = model.entries, onClose = { model.viewing = null })
             return
         }
         val image = model.viewing

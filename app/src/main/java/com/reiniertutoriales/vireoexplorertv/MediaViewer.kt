@@ -49,11 +49,18 @@ import androidx.compose.foundation.lazy.items
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource.DataSource.Factory? = null, onClose: () -> Unit) {
+internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource.DataSource.Factory? = null, sidecars: List<Entry> = emptyList(), onClose: () -> Unit) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     var error by remember(entry.uri) { mutableStateOf<String?>(null) }
     val prefs = remember { context.getSharedPreferences("playback_positions", android.content.Context.MODE_PRIVATE) }
+    val automaticSubtitles = remember(entry.uri, sidecars) {
+        sidecars.filter { !it.directory && matchesSubtitle(entry.name, it.name) }.take(16).mapNotNull { candidate ->
+            subtitleMimeForName(candidate.name)?.let { mime ->
+                MediaItem.SubtitleConfiguration.Builder(candidate.uri).setMimeType(mime).setLabel(candidate.name).build()
+            }
+        }
+    }
     var subtitle by remember(entry.uri) { mutableStateOf<Uri?>(null) }
     var subtitleMime by remember(entry.uri) { mutableStateOf<String?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -100,8 +107,9 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         val uri = subtitle
         val mime = subtitleMime
         if (p != null && uri != null && mime != null) {
+            val manual = MediaItem.SubtitleConfiguration.Builder(uri).setMimeType(mime).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
             val item = MediaItem.Builder().setUri(entry.uri)
-                .setSubtitleConfigurations(listOf(MediaItem.SubtitleConfiguration.Builder(uri).setMimeType(mime).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build())).build()
+                .setSubtitleConfigurations(automaticSubtitles.filter { it.uri != uri } + manual).build()
             if (p.currentMediaItem?.localConfiguration?.subtitleConfigurations != item.localConfiguration?.subtitleConfigurations) {
                 val position = p.currentPosition
                 p.setMediaItem(item, position)
@@ -138,7 +146,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
             })
             session = MediaSession.Builder(context, p).build()
-            p.setMediaItem(MediaItem.fromUri(entry.uri), position)
+            p.setMediaItem(MediaItem.Builder().setUri(entry.uri).setSubtitleConfigurations(automaticSubtitles).build(), position)
             p.prepare()
             p.playWhenReady = true
             player = p
@@ -272,3 +280,11 @@ internal fun describeTrack(format: Format): String = buildList {
     if (format.sampleRate > 0) add(format.sampleRate.toString() + " Hz")
     format.language?.let { add(it) }
 }.joinToString(" · ")
+
+internal fun matchesSubtitle(mediaName: String, subtitleName: String): Boolean {
+    if (subtitleMimeForName(subtitleName) == null) return false
+    val media = mediaName.substringBeforeLast('.')
+    val caption = subtitleName.substringBeforeLast('.')
+    return media.isNotBlank() && (caption.equals(media, ignoreCase = true) ||
+        caption.startsWith(media + ".", ignoreCase = true))
+}

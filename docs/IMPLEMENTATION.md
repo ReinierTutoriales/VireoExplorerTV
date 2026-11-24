@@ -107,3 +107,5 @@ CI 45460943253 passed. MediaViewer full-size PlayerView with bottom TV overlay, 
 CI 45461762052 passed. Media3 native resize modes fit/zoom/stretch, playback speed 0.75–2x, media metadata title/artist listener, local and SMB shared player. No new dependencies. New CI and runtime validation pending. HDR and codec capability reporting not implemented in this batch.
 
 CI 45462208452 passed. Native Media3 DefaultRenderersFactory decoder initialization fallback enabled; subtitle fractional text size S/M/L through SubtitleView; track information exposes MIME, codec string, dimensions, frame rate, channel count, sample rate, language and Media3 support/selection state. No new codecs bundled; no universal hardware support claim. New CI pending.
+
+CI 45463525178 passed. Local sidecar subtitles matched against current folder entries by exact stem or dot-delimited suffix, capped at 16, attached at initial MediaItem creation using Media3 SubtitleConfiguration. Manual subtitle selection retained alongside automatic tracks. Added filename matching unit test. SMB sidecars and runtime validation pending.
