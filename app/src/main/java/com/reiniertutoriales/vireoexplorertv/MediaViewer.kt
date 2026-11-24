@@ -9,6 +9,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.LifecycleStartEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -32,23 +37,30 @@ import androidx.compose.foundation.lazy.items
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource.DataSource.Factory? = null, onClose: () -> Unit) {
-    val context = LocalContext.current
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    var error by remember(entry.uri) { mutableStateOf<String?>(null) }
     val prefs = remember { context.getSharedPreferences("playback_positions", android.content.Context.MODE_PRIVATE) }
     var subtitle by remember(entry.uri) { mutableStateOf<Uri?>(null) }
     var subtitleMime by remember(entry.uri) { mutableStateOf<String?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
-            val mime = subtitleMimeForName(name.orEmpty())
-            if (mime != null) { subtitleMime = mime; subtitle = uri }
+        if (uri != null) scope.launch {
+            try {
+                val name = withContext(Dispatchers.IO) {
+                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { if (it.moveToFirst()) it.getString(0) else null }
+                }
+                val mime = subtitleMimeForName(name.orEmpty())
+                if (mime != null) { subtitleMime = mime; subtitle = uri; error = null }
+                else error = "Unsupported subtitle format"
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { error = "Cannot read subtitle" }
         }
     }
     var player by remember(entry.uri) { mutableStateOf<ExoPlayer?>(null) }
     var playing by remember { mutableStateOf(false) }
     var tracks by remember { mutableStateOf(Tracks.EMPTY) }
-    var error by remember { mutableStateOf<String?>(null) }
     var trackType by remember { mutableIntStateOf(C.TRACK_TYPE_UNKNOWN) }
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(subtitle, subtitleMime, player) {
         val p = player
         val uri = subtitle
@@ -64,7 +76,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
         }
     }
-    DisposableEffect(entry.uri, lifecycleOwner) {
+    LifecycleStartEffect(entry.uri, sourceFactory) {
         var session: MediaSession? = null
         var active: ExoPlayer? = null
         var position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
@@ -72,6 +84,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             active?.let { position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L); prefs.edit().putLong(entry.uri.toString(), position).apply(); session?.release(); session = null; it.release() }
             active = null
             player = null
+            playing = false
+            tracks = Tracks.EMPTY
         }
         fun start() {
             if (active != null) return
@@ -92,15 +106,11 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             p.playWhenReady = true
             player = p
         }
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            when (event) {
-                androidx.lifecycle.Lifecycle.Event.ON_START -> start()
-                androidx.lifecycle.Lifecycle.Event.ON_STOP -> stop()
-                else -> Unit
-            }
+        try { start() } catch (e: Exception) {
+            stop()
+            error = e.localizedMessage ?: "Cannot initialize player"
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); stop() }
+        onStopOrDispose { stop() }
     }
     BackHandler { if (trackType != C.TRACK_TYPE_UNKNOWN) trackType = C.TRACK_TYPE_UNKNOWN else onClose() }
     Column(Modifier.fillMaxSize().background(Color.Black).padding(16.dp)) {
