@@ -17,6 +17,7 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 private data class InstalledApp(val name: String, val pkg: String, val system: Boolean)
 
@@ -26,6 +27,9 @@ internal fun AppManager(onClose: () -> Unit) {
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var stats by remember { mutableStateOf<String?>(null) }
+    var statsJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val scope = rememberCoroutineScope()
     var showSystem by remember { mutableStateOf(false) }
     var revision by remember { mutableIntStateOf(0) }
     fun open(intent: Intent) {
@@ -55,15 +59,36 @@ internal fun AppManager(onClose: () -> Unit) {
             Button(onClick = { showSystem = !showSystem }) { Text(if (showSystem) "Hide system" else "Show system") }
             Button(onClick = { revision++ }) { Text("Refresh") }
         }
+        Button(onClick = { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Authorize usage statistics") }
+        stats?.let { Text(it) }
         Text("Visible applications only. Clear cache, clear data and uninstall through Android settings.")
         error?.let { Text(it) }
         if (loading) Text("Loading applications…")
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(apps.filter { showSystem || !it.system }, key = { it.pkg }) { app ->
-                Button(onClick = { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))) }, modifier = Modifier.fillMaxWidth()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))) }, modifier = Modifier.weight(1f)) {
                     Column { Text(app.name); Text(app.pkg) }
+                }
+                Button(enabled = android.os.Build.VERSION.SDK_INT >= 26, onClick = {
+                    statsJob?.cancel()
+                    statsJob = scope.launch {
+                        stats = try { withContext(Dispatchers.IO) { applicationStorage(context, app.pkg) } }
+                        catch (e: CancellationException) { throw e }
+                        catch (_: SecurityException) { "Usage access required" }
+                        catch (_: Exception) { "Storage statistics unavailable" }
+                    }
+                }) { Text("Size") }
                 }
             }
         }
     }
+}
+
+private fun applicationStorage(context: android.content.Context, pkg: String): String {
+    if (android.os.Build.VERSION.SDK_INT < 26) return "Storage statistics require Android 8"
+    val info = context.packageManager.getApplicationInfo(pkg, 0)
+    val manager = context.getSystemService(android.app.usage.StorageStatsManager::class.java)
+    val stats = manager.queryStatsForPackage(info.storageUuid, pkg, android.os.Process.myUserHandle())
+    return "$pkg: app ${stats.appBytes / 1048576} MiB · data ${stats.dataBytes / 1048576} MiB (includes cache) · cache ${stats.cacheBytes / 1048576} MiB"
 }

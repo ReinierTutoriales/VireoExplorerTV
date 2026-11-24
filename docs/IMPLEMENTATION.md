@@ -23,3 +23,5 @@ Transfer CI 45422292205 succeeded. Added read-only storage analysis, bounded tra
 Application and system storage management: follow docs/APP_MANAGEMENT.md. Initial visible-app inventory and official settings shortcuts implemented; actual temporary-file cleanup, usage statistics and own-cache cleanup pending. No broad package visibility permission added. New CI pending.
 
 App manager CI 45423079038 succeeded. Added review-only classification of temporary extensions, incomplete downloads, APK installers and empty folders, individual confirmation and metadata/empty-folder revalidation before deletion. No automatic deletion or duplicate deletion. Metadata cannot prove file inactivity or prevent provider races; actual reclaimed space reporting and stronger identity checks pending. New CI pending.
+
+Added optional application storage statistics via StorageStatsManager on API 26+, explicit usage-access settings and per-app query on IO. Cache is included in data bytes; no double counting. No automatic grant. Cleanup CI was still running before this change; new CI pending. Own-cache deletion, verified duplicate deletion and SMB remain pending.
