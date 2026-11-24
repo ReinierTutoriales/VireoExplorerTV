@@ -120,6 +120,26 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         delete(current)
     }
+    private suspend fun containsDirectory(root: Uri, target: Uri): Boolean {
+        val queue = ArrayDeque<Uri>()
+        val seen = HashSet<String>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            val folder = queue.removeFirst()
+            val id = D.getDocumentId(folder)
+            if (id == D.getDocumentId(target)) return true
+            if (!seen.add(id)) continue
+            check(seen.size <= 10000) { "Cannot safely verify destination ancestry" }
+            for (child in children(folder)) {
+                if (child.directory) {
+                    check(queue.size < 10000) { "Cannot safely verify destination ancestry" }
+                    queue.add(child.uri)
+                }
+            }
+        }
+        return false
+    }
     suspend fun moveDirectory(entry: Entry, sourceParent: Uri, destination: Uri): Uri = withContext(Dispatchers.IO) {
         require(android.os.Build.VERSION.SDK_INT >= 24 && entry.directory)
         requireGrant(entry.uri, true)
@@ -128,7 +148,9 @@ class Storage(private val resolver: ContentResolver) {
         check(entry.uri.authority == destination.authority && D.getTreeDocumentId(entry.uri) == D.getTreeDocumentId(destination)) { "Folder move requires the same storage grant" }
         check(D.getDocumentId(sourceParent) != D.getDocumentId(destination)) { "Already in destination" }
         check(D.getDocumentId(entry.uri) != D.getDocumentId(destination)) { "Cannot move into itself" }
-        check(!D.isChildDocument(resolver, entry.uri, destination)) { "Cannot move into a descendant" }
+        val descendant = if (android.os.Build.VERSION.SDK_INT >= 29) D.isChildDocument(resolver, entry.uri, destination)
+            else containsDirectory(entry.uri, destination)
+        check(!descendant) { "Cannot move into a descendant" }
         check(revalidate(entry).flags and D.Document.FLAG_SUPPORTS_MOVE != 0) { "Provider does not support folder move" }
         check(children(sourceParent).any { it.uri == entry.uri }) { "Source folder changed" }
         check(children(destination).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
@@ -215,6 +237,23 @@ class Storage(private val resolver: ContentResolver) {
                 check(D.deleteDocument(resolver, target)) { "Incomplete destination could not be removed" }
             }
         }
+    }
+    suspend fun availableBytes(parent: Uri): Long? = withContext(Dispatchers.IO) {
+        requireGrant(parent)
+        val rootsUri = D.buildRootsUri(checkNotNull(parent.authority))
+        // Root IDs are not necessarily document IDs. Match the root document ID only.
+        val treeId = D.getTreeDocumentId(parent)
+        val columns = arrayOf(D.Root.COLUMN_DOCUMENT_ID, D.Root.COLUMN_AVAILABLE_BYTES)
+        try {
+            resolver.query(rootsUri, columns, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(0) == treeId && !cursor.isNull(1)) return@withContext cursor.getLong(1).takeIf { it >= 0 }
+                }
+                null
+            }
+        } catch (_: SecurityException) { null }
+        catch (_: IllegalArgumentException) { null }
+        catch (_: UnsupportedOperationException) { null }
     }
     suspend fun create(parent: Uri, name: String) = withContext(Dispatchers.IO) {
         requireGrant(parent, true)

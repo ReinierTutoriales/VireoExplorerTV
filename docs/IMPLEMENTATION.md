@@ -67,3 +67,5 @@ CI 45443447249 passed. Added bounded recursive SAF directory copy with preflight
 CI 45444038075 passed. Added multi-selection, select visible, batch copy of files/directories and batch move of files only. Sequential verified transfers retain unfinished clipboard entries after partial failure; no bulk deletion. New CI pending.
 
 CI 45444597042 passed. Added provider-native directory move via DocumentsContract.moveDocument when FLAG_SUPPORTS_MOVE is present, restricted to same persisted tree, with source parent, descendant and conflict checks. No recursive deletion fallback. New CI pending.
+
+CI 45445805113 failed NewApi for isChildDocument (API29). Added API guard and bounded cancellable directory traversal on API24–28, fail closed on traversal limits. Added optional provider-reported available bytes using DocumentsContract root metadata, only exact root document ID matches; unknown space remains hidden. New CI pending.

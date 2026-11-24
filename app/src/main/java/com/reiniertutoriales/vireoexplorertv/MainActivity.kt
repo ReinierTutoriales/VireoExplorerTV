@@ -96,7 +96,9 @@ class MainActivity : ComponentActivity() {
         }
         val parent = path.lastOrNull()?.first
         val writable = roots.any { it in writableRoots && storage.root(it) == path.firstOrNull()?.first }
+        var freeBytes by remember { mutableStateOf<Long?>(null) }
         LaunchedEffect(parent, revision) {
+            freeBytes = null
             search = ""
             multi = false
             marked = emptySet()
@@ -105,7 +107,7 @@ class MainActivity : ComponentActivity() {
             if (parent != null) {
                 busy = true
                 error = null
-                try { entries = storage.children(parent) }
+                try { entries = storage.children(parent); freeBytes = storage.availableBytes(parent) }
                 catch (e: CancellationException) { throw e }
                 catch (e: Exception) { error = e.localizedMessage ?: "Cannot read folder" }
                 finally { busy = false }
@@ -162,6 +164,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            freeBytes?.let { Text("Available: " + android.text.format.Formatter.formatFileSize(this@MainActivity, it)) }
             if(busy) Text("Reading storage…")
             if(mutating) Text("Working…")
             val pending = clipboard
