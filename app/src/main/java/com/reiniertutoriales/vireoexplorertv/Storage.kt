@@ -80,13 +80,33 @@ class Storage(private val resolver: ContentResolver) {
         }
         ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures, (files.filter { cleanupReason(it.name) != null } + emptyFolders).distinctBy { it.uri })
     }
-    suspend fun cleanCandidate(entry: Entry) = withContext(Dispatchers.IO) {
+    private fun revalidate(entry: Entry): Entry {
         val columns = arrayOf(D.Document.COLUMN_DISPLAY_NAME, D.Document.COLUMN_SIZE, D.Document.COLUMN_FLAGS, D.Document.COLUMN_MIME_TYPE)
         val current = checkNotNull(resolver.query(entry.uri, columns, null, null, null)).use { c ->
             check(c.moveToFirst()) { "File unavailable" }
             Entry(entry.uri, c.getString(0), c.getString(3), if (c.isNull(1)) -1 else c.getLong(1), c.getInt(2))
         }
         check(current.name == entry.name && current.size == entry.size && current.mime == entry.mime) { "File changed; scan again" }
+        return current
+    }
+    suspend fun removeDuplicate(entry: Entry, keep: Entry) = withContext(Dispatchers.IO) {
+        require(entry.uri != keep.uri && entry.uri.authority == keep.uri.authority)
+        require(D.getDocumentId(entry.uri) != D.getDocumentId(keep.uri))
+        require(!entry.directory && !keep.directory && entry.size > 0 && entry.size == keep.size)
+        val target = revalidate(entry)
+        revalidate(keep)
+        checkNotNull(resolver.openInputStream(target.uri)).buffered().use { first ->
+            checkNotNull(resolver.openInputStream(keep.uri)).buffered().use { second ->
+                check(equalStreams(first, second, entry.size) { coroutineContext.ensureActive() }) { "Files differ; scan again" }
+            }
+        }
+        revalidate(keep)
+        val checked = revalidate(target)
+        coroutineContext.ensureActive()
+        delete(checked)
+    }
+    suspend fun cleanCandidate(entry: Entry) = withContext(Dispatchers.IO) {
+        val current = revalidate(entry)
         if (current.directory) check(children(current.uri).isEmpty()) { "Folder is no longer empty" }
         else check(cleanupReason(current.name) != null)
         coroutineContext.ensureActive()
@@ -165,4 +185,29 @@ internal fun cleanupReason(name: String): String? = when (name.substringAfterLas
     "part", "partial", "crdownload" -> "Possible incomplete download"
     "apk" -> "APK installer"
     else -> null
+}
+
+internal inline fun equalStreams(a: java.io.InputStream, b: java.io.InputStream, expected: Long, checkCancellation: () -> Unit): Boolean {
+    var remaining = expected
+    val left = ByteArray(32768)
+    val right = ByteArray(32768)
+    while (remaining > 0) {
+        checkCancellation()
+        val count = minOf(remaining, left.size.toLong()).toInt()
+        var offset = 0
+        while (offset < count) {
+            val n = a.read(left, offset, count - offset)
+            if (n <= 0) return false
+            offset += n
+        }
+        offset = 0
+        while (offset < count) {
+            val n = b.read(right, offset, count - offset)
+            if (n <= 0) return false
+            offset += n
+        }
+        for (i in 0 until count) if (left[i] != right[i]) return false
+        remaining -= count
+    }
+    return a.read() == -1 && b.read() == -1
 }

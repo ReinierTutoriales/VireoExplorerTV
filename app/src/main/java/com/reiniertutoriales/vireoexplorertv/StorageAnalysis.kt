@@ -51,7 +51,7 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
                     items(report.candidates, key = { it.uri.toString() }) { entry ->
                         Button(enabled = !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0, onClick = {
                             AlertDialog.Builder(context).setTitle("Permanently delete?")
-                                .setMessage(entry.name + "\\n" + (if (entry.directory) "Empty folder" else cleanupReason(entry.name)))
+                                .setMessage(entry.name + "\n" + (if (entry.directory) "Empty folder" else cleanupReason(entry.name)))
                                 .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
                                     deleting = true
                                     scope.launch {
@@ -67,11 +67,28 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, onClose: () -> Unit) {
                     }
                 }
             } else if (mode == 1) {
-                Text("Matching SHA-256 candidates; no files deleted")
+                Text("Review matching files. First copy is retained; contents compared before deletion.")
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(report.possibleDuplicates) { group ->
                         Text("${group.size} matching files · ${group.first().size} bytes each")
-                        group.forEach { Text(it.name) }
+                        val keep = group.first()
+                        Text("Keep: ${keep.name} · ${keep.uri}")
+                        group.drop(1).forEach { entry ->
+                            Button(enabled = !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0, onClick = {
+                                AlertDialog.Builder(context).setTitle("Delete duplicate?")
+                                    .setMessage("Delete ${entry.name} and retain ${keep.name}?")
+                                    .setNegativeButton("Cancel", null)
+                                    .setPositiveButton("Delete") { _, _ ->
+                                        deleting = true
+                                        scope.launch {
+                                            try { storage.removeDuplicate(entry, keep); error = null }
+                                            catch (e: CancellationException) { throw e }
+                                            catch (e: Exception) { error = e.localizedMessage ?: "Duplicate deletion failed" }
+                                            finally { deleting = false; revision++ }
+                                        }
+                                    }.show()
+                            }) { Text("Review: ${entry.name} · ${entry.uri}") }
+                        }
                     }
                 }
             } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

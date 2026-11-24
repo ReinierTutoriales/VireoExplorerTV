@@ -27,3 +27,5 @@ App manager CI 45423079038 succeeded. Added review-only classification of tempor
 Added optional application storage statistics via StorageStatsManager on API 26+, explicit usage-access settings and per-app query on IO. Cache is included in data bytes; no double counting. No automatic grant. Cleanup CI was still running before this change; new CI pending. Own-cache deletion, verified duplicate deletion and SMB remain pending.
 
 Cleanup CI 45423637442 succeeded. Statistics CI 45423885708 failed on ProtectedPermissions for PACKAGE_USAGE_STATS. Narrow manifest suppression for documented user-grantable usage access; no global lint suppression. Added explicit cleanup of reserved inactive analysis cache only (currently no producer, so normally zero bytes). Duplicate deletion and SMB pending. New CI pending.
+
+CI 45425614581 succeeded. Added individually confirmed duplicate deletion, distinct document identity checks, exact bounded streaming comparison, metadata revalidation and retained reference copy. Provider concurrency/aliasing cannot be made atomic by SAF; no bulk deletion. New CI pending. Network providers still pending.
