@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
         var busy by remember { mutableStateOf(false) }
         var revision by remember { mutableIntStateOf(0) }
         var selected by remember { mutableStateOf<Entry?>(null) }
+        var viewing by remember { mutableStateOf<Entry?>(null) }
         var mutating by remember { mutableStateOf(false) }
         fun mutate(action: suspend () -> Unit) {
             if (mutating) return
@@ -70,6 +71,11 @@ class MainActivity : ComponentActivity() {
                 finally { busy = false }
             }
         }
+        val image = viewing
+        if (image != null) {
+            ImageViewer(image, contentResolver, onClose = { viewing = null })
+            return
+        }
         BackHandler(mutating || selected != null || path.isNotEmpty()) {
             if (mutating) return@BackHandler
             if(selected != null) selected = null else path = path.dropLast(1)
@@ -94,7 +100,8 @@ class MainActivity : ComponentActivity() {
                 Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = {
-                        try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+                        if (item.mime.startsWith("image/")) viewing = item
+                        else try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         catch(e: Exception) { error = "No compatible viewer installed" }
                     }) { Text("Open") }
                     if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
