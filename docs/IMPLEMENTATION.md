@@ -99,3 +99,5 @@ CI 45457593482 passed. GZIP single-file compression/decompression via native GZI
 CI 45458693284 passed. Apache Commons Compress 1.28.0 selected from official release index https://commons.apache.org/ (checked 2026-11-24). TAR/TAR.GZ/TGZ extraction uses TarArchiveInputStream, native GZIP wrapper, rejects links/sparse/special entries and invalid header checksum. Existing bounds and SAF operations retained. New CI, Android runtime compatibility and archive integration tests pending.
 
 Scope correction: removed GZIP/TAR/TGZ code and UI, Commons Compress catalog/build dependency and active notice. ZIP remains. Multimedia and LAN are the primary roadmap. Earlier entries are historical, not current support. New CI pending.
+
+CI 45459858303 passed after ZIP-only cleanup. Media3 player now exposes elapsed/duration progress, buffering state, explicit 10-second seek increments, seekability gating and horizontally scrollable TV controls. Applies to local and SMB playback. No new dependencies. New CI pending; runtime focus and streaming validation pending.

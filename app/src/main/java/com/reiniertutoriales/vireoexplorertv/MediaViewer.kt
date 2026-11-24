@@ -7,6 +7,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.MimeTypes
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.Canvas
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -59,6 +63,17 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     }
     var player by remember(entry.uri) { mutableStateOf<ExoPlayer?>(null) }
     var playing by remember { mutableStateOf(false) }
+    var positionMs by remember(entry.uri) { mutableLongStateOf(0L) }
+    var durationMs by remember(entry.uri) { mutableLongStateOf(C.TIME_UNSET) }
+    var buffering by remember { mutableStateOf(false) }
+    LaunchedEffect(player) {
+        val active = player ?: return@LaunchedEffect
+        while (true) {
+            positionMs = active.currentPosition.coerceAtLeast(0L)
+            durationMs = active.duration
+            delay(if (active.isPlaying) 500L else 1000L)
+        }
+    }
     var tracks by remember { mutableStateOf(Tracks.EMPTY) }
     var trackType by remember { mutableIntStateOf(C.TRACK_TYPE_UNKNOWN) }
     LaunchedEffect(subtitle, subtitleMime, player) {
@@ -85,17 +100,19 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             active = null
             player = null
             playing = false
+            buffering = false
             tracks = Tracks.EMPTY
         }
         fun start() {
             if (active != null) return
-            val builder = ExoPlayer.Builder(context)
+            val builder = ExoPlayer.Builder(context).setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000)
             if (sourceFactory != null) builder.setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(sourceFactory))
             val p = builder.build()
             active = p
             p.setAudioAttributes(AudioAttributes.DEFAULT, true)
             p.setHandleAudioBecomingNoisy(true)
             p.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) { buffering = state == Player.STATE_BUFFERING }
                 override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
                 override fun onTracksChanged(value: Tracks) { tracks = value }
                 override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
@@ -122,7 +139,16 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         } }, update = { it.player = player; it.keepScreenOn = playing },
             onRelease = { it.player = null; it.keepScreenOn = false },
             modifier = Modifier.weight(1f).fillMaxWidth())
+        if (buffering) Text("Buffering…")
         error?.let { Text(it) }
+        if (durationMs > 0) {
+            val fraction = (positionMs.toDouble() / durationMs).coerceIn(0.0, 1.0).toFloat()
+            Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                drawRect(Color.DarkGray)
+                drawRect(Color(0xFF80DCC0), size = androidx.compose.ui.geometry.Size(size.width * fraction, size.height))
+            }
+            Text(playbackTime(positionMs) + " / " + playbackTime(durationMs))
+        }
         val p = player
         if (trackType != C.TRACK_TYPE_UNKNOWN && p != null) {
             LazyColumn(Modifier.heightIn(max = 160.dp)) {
@@ -145,11 +171,11 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onClose) { Text("Back") }
-            Button(enabled = p != null, onClick = { p?.seekBack() }) { Text("−10s") }
+            Button(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekBack() }) { Text("−10s") }
             Button(enabled = p != null, onClick = { p?.let { if (it.isPlaying) it.pause() else it.play() } }) { Text(if (playing) "Pause" else "Play") }
-            Button(enabled = p != null, onClick = { p?.seekForward() }) { Text("+10s") }
+            Button(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekForward() }) { Text("+10s") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }, onClick = { trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
             Button(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }, onClick = { trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
             Button(enabled = p != null, onClick = { try { picker.launch(arrayOf("*/*")) } catch (e: Exception) { error = "Subtitle picker unavailable" } }) { Text("External") }
@@ -163,4 +189,10 @@ internal fun subtitleMimeForName(name: String): String? = when (name.substringAf
     "vtt" -> MimeTypes.TEXT_VTT
     "ttml", "dfxp" -> MimeTypes.APPLICATION_TTML
     else -> null
+}
+
+private fun playbackTime(ms: Long): String {
+    val seconds = ms.coerceAtLeast(0) / 1000
+    return if (seconds >= 3600) String.format(java.util.Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+    else String.format(java.util.Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60)
 }
