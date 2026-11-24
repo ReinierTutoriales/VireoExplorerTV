@@ -71,3 +71,5 @@ CI 45444597042 passed. Added provider-native directory move via DocumentsContrac
 CI 45445805113 failed NewApi for isChildDocument (API29). Added API guard and bounded cancellable directory traversal on API24–28, fail closed on traversal limits. Added optional provider-reported available bytes using DocumentsContract root metadata, only exact root document ID matches; unknown space remains hidden. New CI pending.
 
 CI 45446808435 passed. Added stop/skip/keep-both conflict policies, case-insensitive alternate naming, per-item destination checks and three naming tests. Native folder move cannot rename on conflict; no overwrite policy. New CI pending.
+
+CI 45448074062 passed. Explorer state and storage instance moved to AndroidViewModel; mutation and transfer jobs use viewModelScope, retaining state across Activity recreation. UI state still uses Compose snapshots; StateFlow and process-death restoration remain pending. New CI pending.

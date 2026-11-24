@@ -19,47 +19,30 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import android.app.AlertDialog
 import android.widget.EditText
 import android.text.InputType
 
 class MainActivity : ComponentActivity() {
+    private val model by lazy { ViewModelProvider(this)[ExplorerModel::class.java] }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { VireoTheme { Explorer() } }
     }
 
     @Composable private fun Explorer() {
-        val scope = rememberCoroutineScope()
-        val storage = remember { Storage(contentResolver) }
-        var path by remember { mutableStateOf<List<Pair<Uri,String>>>(emptyList()) }
-        var roots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }) }
-        var entries by remember { mutableStateOf<List<Entry>>(emptyList()) }
-        var error by remember { mutableStateOf<String?>(null) }
-        var busy by remember { mutableStateOf(false) }
-        var revision by remember { mutableIntStateOf(0) }
-        var selected by remember { mutableStateOf<Entry?>(null) }
-        var viewing by remember { mutableStateOf<Entry?>(null) }
-        var clipboard by remember { mutableStateOf<Pair<List<Entry>, Boolean>?>(null) }
-        var conflictPolicy by remember { mutableStateOf(ConflictPolicy.STOP) }
-        var clipboardParent by remember { mutableStateOf<Uri?>(null) }
-        var multi by remember { mutableStateOf(false) }
-        var marked by remember { mutableStateOf<Set<Uri>>(emptySet()) }
-        var transferJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-        var transferred by remember { mutableLongStateOf(0L) }
-        var search by remember { mutableStateOf("") }
-        var scanOpen by remember { mutableStateOf(false) }
-        var networkOpen by remember { mutableStateOf(false) }
-        var appsOpen by remember { mutableStateOf(false) }
-        var mutating by remember { mutableStateOf(false) }
+        val scope = model.viewModelScope
+        val storage = model.storage
         fun mutate(action: suspend () -> Unit) {
-            if (mutating) return
-            mutating = true
+            if (model.mutating) return
+            model.mutating = true
             scope.launch {
-                try { action(); selected = null; revision++ }
+                try { action(); model.selected = null; model.revision++ }
                 catch (e: CancellationException) { throw e }
-                catch (e: Exception) { error = e.localizedMessage ?: "Operation failed" }
-                finally { mutating = false }
+                catch (e: Exception) { model.error = e.localizedMessage ?: "Operation failed" }
+                finally { model.mutating = false }
             }
         }
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -70,209 +53,209 @@ class MainActivity : ComponentActivity() {
                 if (granted and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 } else contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                roots = contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }
-                path = listOf(storage.root(uri) to "Storage")
-            } catch (e: Exception) { error = e.localizedMessage ?: "Permission unavailable" }
+                model.roots = contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }
+                model.path = listOf(storage.root(uri) to "Storage")
+            } catch (e: Exception) { model.error = e.localizedMessage ?: "Permission unavailable" }
         }
         var writableRoots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()) }
         DisposableEffect(Unit) {
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                     val grants = contentResolver.persistedUriPermissions
-                    roots = grants.filter { it.isReadPermission }.map { it.uri }
+                    model.roots = grants.filter { it.isReadPermission }.map { it.uri }
                     writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
-                    if (path.isNotEmpty() && roots.none { storage.root(it) == path.first().first }) {
-                        path = emptyList(); selected = null; viewing = null; scanOpen = false
-                        error = "Storage access revoked"
+                    if (model.path.isNotEmpty() && model.roots.none { storage.root(it) == model.path.first().first }) {
+                        model.path = emptyList(); model.selected = null; model.viewing = null; model.scanOpen = false
+                        model.error = "Storage access revoked"
                     }
                 }
             }
             lifecycle.addObserver(observer)
             onDispose { lifecycle.removeObserver(observer) }
         }
-        LaunchedEffect(roots) { writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet() }
+        LaunchedEffect(model.roots) { writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet() }
         var volumes by remember { mutableStateOf<List<VolumeInfo>>(emptyList()) }
         LaunchedEffect(Unit) {
             observeVolumes(this@MainActivity).collect { volumes = it }
         }
-        val parent = path.lastOrNull()?.first
-        val writable = roots.any { it in writableRoots && storage.root(it) == path.firstOrNull()?.first }
+        val parent = model.path.lastOrNull()?.first
+        val writable = model.roots.any { it in writableRoots && storage.root(it) == model.path.firstOrNull()?.first }
         var freeBytes by remember { mutableStateOf<Long?>(null) }
-        LaunchedEffect(parent, revision) {
+        LaunchedEffect(parent, model.revision) {
             freeBytes = null
-            search = ""
-            multi = false
-            marked = emptySet()
-            entries = emptyList()
-            selected = null
+            model.search = ""
+            model.multi = false
+            model.marked = emptySet()
+            model.entries = emptyList()
+            model.selected = null
             if (parent != null) {
-                busy = true
-                error = null
-                try { entries = storage.children(parent); freeBytes = storage.availableBytes(parent) }
+                model.busy = true
+                model.error = null
+                try { model.entries = storage.children(parent); freeBytes = storage.availableBytes(parent) }
                 catch (e: CancellationException) { throw e }
-                catch (e: Exception) { error = e.localizedMessage ?: "Cannot read folder" }
-                finally { busy = false }
+                catch (e: Exception) { model.error = e.localizedMessage ?: "Cannot read folder" }
+                finally { model.busy = false }
             }
         }
-        if (scanOpen && parent != null) {
-            StorageAnalysis(storage, parent, onClose = { scanOpen = false })
+        if (model.scanOpen && parent != null) {
+            StorageAnalysis(storage, parent, onClose = { model.scanOpen = false })
             return
         }
-        if (networkOpen) {
-            SmbBrowser { networkOpen = false }
+        if (model.networkOpen) {
+            SmbBrowser { model.networkOpen = false }
             return
         }
-        if (appsOpen) {
-            AppManager(onClose = { appsOpen = false })
+        if (model.appsOpen) {
+            AppManager(onClose = { model.appsOpen = false })
             return
         }
-        val video = viewing?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
+        val video = model.viewing?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
         if (video != null) {
-            MediaViewer(video, onClose = { viewing = null })
+            MediaViewer(video, onClose = { model.viewing = null })
             return
         }
-        val image = viewing
+        val image = model.viewing
         if (image != null) {
-            ImageViewer(image, contentResolver, onClose = { viewing = null })
+            ImageViewer(image, contentResolver, onClose = { model.viewing = null })
             return
         }
-        BackHandler(mutating || multi || selected != null || path.isNotEmpty()) {
-            if (mutating) return@BackHandler
-            if (multi) { multi = false; marked = emptySet() } else if(selected != null) selected = null else path = path.dropLast(1)
+        BackHandler(model.mutating || model.multi || model.selected != null || model.path.isNotEmpty()) {
+            if (model.mutating) return@BackHandler
+            if (model.multi) { model.multi = false; model.marked = emptySet() } else if(model.selected != null) model.selected = null else model.path = model.path.dropLast(1)
         }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("VireoExplorerTV", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-            Text(path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
+            Text(model.path.joinToString(" / ") { it.second }.ifEmpty { "Storage locations" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(enabled = !mutating, onClick = { try { picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)) } catch (e: Exception) { error = "System folder picker unavailable" } }) { Text("Add folder") }
+                Button(enabled = !model.mutating, onClick = { try { picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)) } catch (e: Exception) { model.error = "System folder picker unavailable" } }) { Text("Add folder") }
                 if (parent == null) {
-                    Button(enabled = !mutating, onClick = { appsOpen = true }) { Text("Apps & storage") }
-                    Button(enabled = !mutating, onClick = { networkOpen = true }) { Text("SMB network") }
+                    Button(enabled = !model.mutating, onClick = { model.appsOpen = true }) { Text("Apps & storage") }
+                    Button(enabled = !model.mutating, onClick = { model.networkOpen = true }) { Text("SMB network") }
                 }
                 if(parent != null) {
-                    Button(enabled = !mutating, onClick = { path = path.dropLast(1) }) { Text("Back") }
-                    Button(enabled = !mutating, onClick = { revision++ }) { Text("Refresh") }
-                    Button(enabled = !mutating && !busy, onClick = { scanOpen = true }) { Text("Analyze") }
-                    Button(enabled = !mutating, onClick = { searchDialog(search) { search = it } }) { Text("Search") }
-                    Button(enabled = !mutating && !busy && selected == null, onClick = { multi = !multi; marked = emptySet() }) { Text(if (multi) "Cancel selection" else "Select multiple") }
-                    Button(enabled = writable && !mutating && !busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
+                    Button(enabled = !model.mutating, onClick = { model.path = model.path.dropLast(1) }) { Text("Back") }
+                    Button(enabled = !model.mutating, onClick = { model.revision++ }) { Text("Refresh") }
+                    Button(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
+                    Button(enabled = !model.mutating, onClick = { searchDialog(model.search) { model.search = it } }) { Text("Search") }
+                    Button(enabled = !model.mutating && !model.busy && model.selected == null, onClick = { model.multi = !model.multi; model.marked = emptySet() }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
+                    Button(enabled = writable && !model.mutating && !model.busy, onClick = { nameDialog("New folder", "") { name -> mutate { storage.create(parent, name) } } }) { Text("New folder") }
                 }
             }
-            if (search.isNotEmpty()) {
+            if (model.search.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Search: $search")
-                    Button(onClick = { search = "" }) { Text("Clear search") }
+                    Text("Search: $model.search")
+                    Button(onClick = { model.search = "" }) { Text("Clear search") }
                 }
             }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            model.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             freeBytes?.let { Text("Available: " + android.text.format.Formatter.formatFileSize(this@MainActivity, it)) }
-            if(busy) Text("Reading storage…")
-            if(mutating) Text("Working…")
-            val pending = clipboard
+            if(model.busy) Text("Reading storage…")
+            if(model.mutating) Text("Working…")
+            val pending = model.clipboard
             if (pending != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text((if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name })
-                    Button(enabled = parent != null && writable && !mutating && !busy, onClick = {
+                    Button(enabled = parent != null && writable && !model.mutating && !model.busy, onClick = {
                         val destination = parent ?: return@Button
-                        val policy = conflictPolicy
-                        mutating = true
-                        transferred = 0
-                        transferJob = scope.launch {
+                        val policy = model.conflictPolicy
+                        model.mutating = true
+                        model.transferred = 0
+                        model.transferJob = scope.launch {
                             try {
                                 val report: (Long) -> Unit = { bytes ->
-                                    if (bytes - transferred >= 1024 * 1024) transferred = bytes
+                                    if (bytes - model.transferred >= 1024 * 1024) model.transferred = bytes
                                 }
                                 var completed = 0
                                 var skipped = 0
                                 for (entry in pending.first) {
-                                    transferred = 0
+                                    model.transferred = 0
                                     try {
                                         val names = storage.children(destination).map { it.name }
                                         val name = resolveConflict(entry.name, entry.directory, names, policy)
                                         if (name == null) skipped++
                                         else if (entry.directory && pending.second) {
                                             check(name == entry.name) { "Native folder move cannot rename on conflict" }
-                                            storage.moveDirectory(entry, checkNotNull(clipboardParent), destination)
+                                            storage.moveDirectory(entry, checkNotNull(model.clipboardParent), destination)
                                         } else if (entry.directory) storage.copyDirectory(entry, destination, name, report)
                                         else storage.transfer(entry, destination, pending.second, name, report)
                                         completed++
-                                        clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
+                                        model.clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
                                     } catch (e: CancellationException) { throw e }
                                     catch (e: Exception) { throw IllegalStateException("$completed of ${pending.first.size} items completed: ${e.localizedMessage}", e) }
                                 }
-                                clipboard = null
-                                if (skipped > 0) error = "$skipped conflicting items skipped; originals preserved"
+                                model.clipboard = null
+                                if (skipped > 0) model.error = "$skipped conflicting items skipped; originals preserved"
                             } catch (e: CancellationException) { throw e }
-                            catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
-                            finally { mutating = false; transferJob = null; revision++ }
+                            catch (e: Exception) { model.error = e.localizedMessage ?: "Transfer failed" }
+                            finally { model.mutating = false; model.transferJob = null; model.revision++ }
                         }
                     }) { Text("Paste") }
-                    Button(enabled = !mutating, onClick = { conflictPolicy = ConflictPolicy.entries[(conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size] }) { Text(conflictPolicy.label) }
-                    Button(enabled = !mutating, onClick = { clipboard = null }) { Text("Clear") }
+                    Button(enabled = !model.mutating, onClick = { model.conflictPolicy = ConflictPolicy.entries[(model.conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size] }) { Text(model.conflictPolicy.label) }
+                    Button(enabled = !model.mutating, onClick = { model.clipboard = null }) { Text("Clear") }
                 }
             }
-            if (transferJob != null) {
+            if (model.transferJob != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${transferred / 1024} KiB")
-                    Button(onClick = { transferJob?.cancel() }) { Text("Cancel transfer") }
+                    Text("${model.transferred / 1024} KiB")
+                    Button(onClick = { model.transferJob?.cancel() }) { Text("Cancel transfer") }
                 }
             }
-            if (multi) {
-                val batch = entries.filter { it.uri in marked }
+            if (model.multi) {
+                val batch = model.entries.filter { it.uri in model.marked }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${batch.size} selected")
-                    Button(enabled = !mutating, onClick = { marked = entries.filter { it.name.contains(search, ignoreCase = true) }.map { it.uri }.toSet() }) { Text("Select all visible") }
-                    Button(enabled = !mutating && batch.isNotEmpty(), onClick = { clipboard = batch to false; multi = false; marked = emptySet() }) { Text("Copy selected") }
-                    Button(enabled = !mutating && writable && batch.isNotEmpty() && batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { clipboardParent = parent; clipboard = batch to true; multi = false; marked = emptySet() }) { Text("Move selected") }
+                    Text("${batch.size} model.selected")
+                    Button(enabled = !model.mutating, onClick = { model.marked = model.entries.filter { it.name.contains(model.search, ignoreCase = true) }.map { it.uri }.toSet() }) { Text("Select all visible") }
+                    Button(enabled = !model.mutating && batch.isNotEmpty(), onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }) { Text("Copy model.selected") }
+                    Button(enabled = !model.mutating && writable && batch.isNotEmpty() && batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }) { Text("Move model.selected") }
                 }
             }
-            val item = selected
+            val item = model.selected
             if(item != null) {
                 Text(item.name)
                 Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(enabled = !mutating, onClick = {
-                        if (item.directory) { path = path + (item.uri to item.name); selected = null }
-                        else if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) viewing = item
+                    Button(enabled = !model.mutating, onClick = {
+                        if (item.directory) { model.path = model.path + (item.uri to item.name); model.selected = null }
+                        else if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) model.viewing = item
                         else try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
-                        catch(e: Exception) { error = "No compatible viewer installed" }
+                        catch(e: Exception) { model.error = "No compatible viewer installed" }
                     }) { Text("Open") }
                     if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_RENAME != 0) {
-                        Button(enabled = !mutating, onClick = { nameDialog("Rename", item.name) { name -> mutate { storage.rename(item, name) } } }) { Text("Rename") }
+                        Button(enabled = !model.mutating, onClick = { nameDialog("Rename", item.name) { name -> mutate { storage.rename(item, name) } } }) { Text("Rename") }
                     }
                     if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !mutating, onClick = {
+                        Button(enabled = !model.mutating, onClick = {
                             AlertDialog.Builder(this@MainActivity).setTitle(if (item.directory) "Delete empty folder?" else "Delete file?")
                                 .setMessage(item.name).setNegativeButton("Cancel", null)
                                 .setPositiveButton("Delete") { _, _ -> mutate { storage.delete(item) } }.show()
                         }) { Text("Delete") }
                     }
-                    Button(enabled = !mutating, onClick = { clipboard = listOf(item) to false; selected = null }) { Text("Copy") }
-                    if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !mutating && (!item.directory || item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0), onClick = { clipboardParent = parent; clipboard = listOf(item) to true; selected = null }) { Text("Move") }
+                    Button(enabled = !model.mutating, onClick = { model.clipboard = listOf(item) to false; model.selected = null }) { Text("Copy") }
+                    if (writable && (if (item.directory) item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0)) {
+                        Button(enabled = !model.mutating && (!item.directory || item.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0), onClick = { model.clipboardParent = parent; model.clipboard = listOf(item) to true; model.selected = null }) { Text("Move") }
                     }
-                    Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
+                    Button(enabled = !model.mutating, onClick = { model.selected = null }) { Text("Close") }
                 }
             } else if(parent == null) {
                 volumes.forEach { volume ->
-                    Button(enabled = !mutating && (volume.state == android.os.Environment.MEDIA_MOUNTED || volume.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY), onClick = {
+                    Button(enabled = !model.mutating && (volume.state == android.os.Environment.MEDIA_MOUNTED || volume.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY), onClick = {
                         try {
                             val intent = if (android.os.Build.VERSION.SDK_INT >= 29) volume.volume.createOpenDocumentTreeIntent()
                                 else Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                             picker.launch(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION))
-                        } catch (_: Exception) { error = "Volume picker unavailable; use Add folder" }
+                        } catch (_: Exception) { model.error = "Volume picker unavailable; use Add folder" }
                     }) { Text(volume.label + " · " + volume.state + if (volume.removable) " · Removable" else "") }
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(roots, key = { it.toString() }) { uri ->
-                        Button(onClick = { path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri)) }) { Text(DocumentsContract.getTreeDocumentId(uri)) }
+                    items(model.roots, key = { it.toString() }) { uri ->
+                        Button(onClick = { model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri)) }) { Text(DocumentsContract.getTreeDocumentId(uri)) }
                     }
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(entries.filter { it.name.contains(search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
-                        Button(enabled = !mutating, onClick = { if (multi) marked = if (entry.uri in marked) marked - entry.uri else marked + entry.uri else selected = entry }, modifier = Modifier.fillMaxWidth()) {
-                            Text((if (multi) { if (entry.uri in marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name)
+                    items(model.entries.filter { it.name.contains(model.search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
+                        Button(enabled = !model.mutating, onClick = { if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri else model.selected = entry }, modifier = Modifier.fillMaxWidth()) {
+                            Text((if (model.multi) { if (entry.uri in model.marked) "✓  " else "□  " } else "") + (if(entry.directory) "▸  " else "") + entry.name)
                         }
                     }
                 }
