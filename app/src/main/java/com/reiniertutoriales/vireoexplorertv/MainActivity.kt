@@ -192,7 +192,8 @@ class MainActivity : ComponentActivity() {
                 Text(if(item.size >= 0) "${item.size} bytes" else item.mime)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(enabled = !mutating, onClick = {
-                        if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) viewing = item
+                        if (item.directory) { path = path + (item.uri to item.name); selected = null }
+                        else if (item.mime.startsWith("image/") || item.mime.startsWith("video/") || item.mime.startsWith("audio/")) viewing = item
                         else try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(item.uri,item.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
                         catch(e: Exception) { error = "No compatible viewer installed" }
                     }) { Text("Open") }
@@ -201,19 +202,27 @@ class MainActivity : ComponentActivity() {
                     }
                     if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
                         Button(enabled = !mutating, onClick = {
-                            AlertDialog.Builder(this@MainActivity).setTitle("Delete file?")
+                            AlertDialog.Builder(this@MainActivity).setTitle(if (item.directory) "Delete empty folder?" else "Delete file?")
                                 .setMessage(item.name).setNegativeButton("Cancel", null)
                                 .setPositiveButton("Delete") { _, _ -> mutate { storage.delete(item) } }.show()
                         }) { Text("Delete") }
                     }
-                    Button(enabled = !mutating, onClick = { clipboard = item to false; selected = null }) { Text("Copy") }
+                    Button(enabled = !mutating && !item.directory, onClick = { clipboard = item to false; selected = null }) { Text("Copy") }
                     if (item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
-                        Button(enabled = !mutating, onClick = { clipboard = item to true; selected = null }) { Text("Move") }
+                        Button(enabled = !mutating && !item.directory, onClick = { clipboard = item to true; selected = null }) { Text("Move") }
                     }
                     Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
                 }
             } else if(parent == null) {
-                volumes.forEach { volume -> Text(volume.label + " · " + volume.state + if (volume.removable) " · Removable" else "") }
+                volumes.forEach { volume ->
+                    Button(enabled = !mutating && (volume.state == android.os.Environment.MEDIA_MOUNTED || volume.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY), onClick = {
+                        try {
+                            val intent = if (android.os.Build.VERSION.SDK_INT >= 29) volume.volume.createOpenDocumentTreeIntent()
+                                else Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                            picker.launch(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION))
+                        } catch (_: Exception) { error = "Volume picker unavailable; use Add folder" }
+                    }) { Text(volume.label + " · " + volume.state + if (volume.removable) " · Removable" else "") }
+                }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(roots, key = { it.toString() }) { uri ->
                         Button(onClick = { path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri)) }) { Text(DocumentsContract.getTreeDocumentId(uri)) }
@@ -222,7 +231,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(entries.filter { it.name.contains(search, ignoreCase = true) }, key = { it.uri.toString() }) { entry ->
-                        Button(enabled = !mutating, onClick = { if(entry.directory) path = path + (entry.uri to entry.name) else selected = entry }, modifier = Modifier.fillMaxWidth()) {
+                        Button(enabled = !mutating, onClick = { selected = entry }, modifier = Modifier.fillMaxWidth()) {
                             Text((if(entry.directory) "▸  " else "") + entry.name)
                         }
                     }

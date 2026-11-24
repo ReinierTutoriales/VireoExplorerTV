@@ -9,12 +9,12 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 
-internal data class VolumeInfo(val label: String, val state: String, val removable: Boolean)
+internal data class VolumeInfo(val label: String, val state: String, val removable: Boolean, val volume: android.os.storage.StorageVolume)
 
 internal fun observeVolumes(context: Context) = callbackFlow<List<VolumeInfo>> {
     val manager = context.getSystemService(StorageManager::class.java)
     fun refresh() {
-        trySend(manager.storageVolumes.map { VolumeInfo(it.getDescription(context), it.state, it.isRemovable) })
+        trySend(manager.storageVolumes.map { VolumeInfo(it.getDescription(context), it.state, it.isRemovable, it) })
     }
     val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) { refresh() }

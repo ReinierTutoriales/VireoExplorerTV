@@ -163,7 +163,10 @@ class Storage(private val resolver: ContentResolver) {
     }
     suspend fun delete(entry: Entry) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri, true)
-        check(revalidate(entry).flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
+        val current = revalidate(entry)
+        check(current.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
+        if (current.directory) check(children(current.uri).isEmpty()) { "Only empty folders can be deleted" }
+        coroutineContext.ensureActive()
         check(D.deleteDocument(resolver, entry.uri))
     }
 }
