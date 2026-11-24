@@ -85,6 +85,15 @@ class MainActivity : ComponentActivity() {
         val volumeFlow = remember { observeVolumes(applicationContext) }
         val volumes by volumeFlow.collectAsStateWithLifecycle(initialValue = emptyList())
         val parent = model.path.lastOrNull()?.first
+        LaunchedEffect(parent) { if (parent != null) updateSettings { preferences.recordFolder(parent.toString()) } }
+        fun openSavedFolder(value: String) {
+            try {
+                val uri = Uri.parse(value)
+                val root = model.roots.map { storage.root(it) }.firstOrNull { it.authority == uri.authority && DocumentsContract.getTreeDocumentId(it) == DocumentsContract.getTreeDocumentId(uri) }
+                if (root == null) { model.error = "Folder access revoked"; return }
+                model.path = if (root == uri) listOf(root to DocumentsContract.getDocumentId(root)) else listOf(root to DocumentsContract.getDocumentId(root), uri to DocumentsContract.getDocumentId(uri))
+            } catch (_: Exception) { model.error = "Saved folder unavailable" }
+        }
         val writable = model.roots.any { it in writableRoots && storage.root(it) == model.path.firstOrNull()?.first }
         LaunchedEffect(parent, model.revision) { model.load(parent) }
         if (model.scanOpen && parent != null) {
@@ -125,6 +134,7 @@ class MainActivity : ComponentActivity() {
                 if(parent != null) {
                     Button(enabled = !model.mutating, onClick = { model.path = model.path.dropLast(1) }) { Text("Back") }
                     Button(enabled = !model.mutating, onClick = { model.revision++ }) { Text("Refresh") }
+                    Button(enabled = !model.mutating, onClick = { updateSettings { preferences.toggleFavorite(parent.toString()) } }) { Text(if (parent.toString() in settings.favorites) "Remove favorite" else "Favorite") }
                     Button(onClick = { updateSettings { preferences.toggleGrid() } }) { Text(if (gridView) "List" else "Grid") }
                     Button(onClick = { updateSettings { preferences.nextSort() } }) { Text(sortLabels[sortIndex]) }
                     Button(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
@@ -209,6 +219,23 @@ class MainActivity : ComponentActivity() {
                     }) { Text(volume.label + " · " + volume.state + if (volume.removable) " · Removable" else "") }
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (settings.favorites.isNotEmpty()) item { Text("Favorite folders") }
+                    items(settings.favorites, key = { "favorite:" + it }) { value ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { openSavedFolder(value) }, modifier = Modifier.weight(1f)) { Text(Uri.parse(value).lastPathSegment ?: value, maxLines = 2) }
+                            Button(onClick = { updateSettings { preferences.toggleFavorite(value) } }) { Text("Remove") }
+                        }
+                    }
+                    if (settings.recent.isNotEmpty()) item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Recent folders")
+                            Button(onClick = { updateSettings { preferences.clearRecent() } }) { Text("Clear") }
+                        }
+                    }
+                    items(settings.recent, key = { "recent:" + it }) { value ->
+                        Button(onClick = { openSavedFolder(value) }, modifier = Modifier.fillMaxWidth()) { Text(Uri.parse(value).lastPathSegment ?: value, maxLines = 2) }
+                    }
+                    item { Text("Authorized storage") }
                     items(model.roots, key = { it.toString() }) { uri ->
                         Button(onClick = { model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri)) }) { Text(DocumentsContract.getTreeDocumentId(uri)) }
                     }

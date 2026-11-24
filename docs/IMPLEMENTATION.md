@@ -87,3 +87,5 @@ CI 45452297983 passed. Explorer rows use ContentResolver.loadThumbnail on API29+
 CI 45452958837 passed. Native LazyVerticalGrid adaptive 180dp and LazyColumn share filtered/sorted entries, stable URI keys and selection action. Four sort modes, folders first, unknown sizes last for size sorting, rememberSaveable view/sort selection. No new dependencies. New CI and D-pad focus validation pending.
 
 CI 45453449308 passed. DataStore Preferences 1.3.0 verified against https://developer.android.com/jetpack/androidx/releases/datastore on 2026-11-24 (stable October 21). Singleton preferences delegate, transactional toggles and lifecycle-aware collection persist grid and sort across sessions. No credentials stored here. New CI pending. Favorites and recent history remain separate pending features.
+
+CI 45455044731 passed. DataStore now stores bounded favorite (50) and recent (20) folder URI lists, explicit remove/clear actions and grant-matched reopening. Saved nested folders reopen with root and destination breadcrumb only; full ancestry and file history not implemented. No new dependencies or permissions. New CI pending.
