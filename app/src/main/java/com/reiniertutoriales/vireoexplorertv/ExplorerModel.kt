@@ -62,10 +62,12 @@ internal class ExplorerModel(application: Application, private val savedState: S
 
     var freeBytes by mutableStateOf<Long?>(null)
         private set
-    private var loadedParent: Uri? = null
+    private var loadedParent by mutableStateOf<Uri?>(null)
     private var loadedRevision = -1
     private var loadGeneration = 0L
     private var loadJob: kotlinx.coroutines.Job? = null
+
+    fun entriesFor(parent: Uri): List<Entry> = if (loadedParent == parent) entries else emptyList()
 
     fun load(parent: Uri?) {
         if (loadedParent == parent && loadedRevision == revision) return
@@ -159,7 +161,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
                                 for (entry in pending.first) {
                                     mutableProgress.value = 0
                                     try {
-                                        val names = storage.children(destination).map { it.name }
+                                        val names = storage.childNames(destination)
                                         val name = resolveConflict(entry.name, entry.directory, names, policy)
                                         if (name == null) skipped++
                                         else if (entry.directory && pending.second) {

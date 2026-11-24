@@ -49,7 +49,7 @@ private suspend fun listSmb(session: SmbShareSession, path: String): List<SmbEnt
     share.list(path).asSequence().filter { it.fileName != "." && it.fileName != ".." }
         .take(5001).map { SmbEntry(it.fileName, it.fileAttributes and 16L != 0L, it.endOfFile) }
         .toList().also { check(it.size <= 5000) { "Directory limit exceeded" } }
-        .sortedWith(compareByDescending<SmbEntry> { it.directory }.thenBy { it.name.lowercase(java.util.Locale.ROOT) })
+        .sortedWith(compareByDescending<SmbEntry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name })
 }
 
 private suspend fun downloadSmb(

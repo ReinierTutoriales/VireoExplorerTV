@@ -38,6 +38,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -415,10 +418,39 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        fun matchesFilter(entry: Entry): Boolean =
-            (category?.matches(entry) != false) &&
-                (entry.directory || entry.name.contains(homeSearch, ignoreCase = true)) &&
-                entry.name.contains(model.search, ignoreCase = true)
+        val folderEntries = model.entriesFor(parent)
+        val folderSearch = model.search
+        val fileCategory = category
+        val dashboardSearch = homeSearch
+        val listingRequest = remember(folderEntries, folderSearch, fileCategory, dashboardSearch, sortIndex) { Any() }
+        var listing by remember(parent) { mutableStateOf<Pair<Any, List<Entry>>?>(null) }
+        LaunchedEffect(parent, listingRequest) {
+            val visible = withContext(Dispatchers.Default) {
+                val context = coroutineContext
+                val names = compareBy<Entry, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name }
+                val order = when (sortIndex) {
+                    1 -> names.reversed()
+                    2 -> compareByDescending<Entry> { it.size }.then(names)
+                    3 -> compareBy<Entry> { if (it.size < 0) Long.MAX_VALUE else it.size }.then(names)
+                    else -> names
+                }
+                val filtered = folderEntries.filterTo(ArrayList()) { entry ->
+                    context.ensureActive()
+                    (fileCategory?.matches(entry) != false) &&
+                        (entry.directory || entry.name.contains(dashboardSearch, ignoreCase = true)) &&
+                        entry.name.contains(folderSearch, ignoreCase = true)
+                }
+                val foldersFirst = compareBy<Entry> { !it.directory }.then(order)
+                filtered.sortWith { left, right ->
+                    context.ensureActive()
+                    foldersFirst.compare(left, right)
+                }
+                filtered
+            }
+            listing = listingRequest to visible
+        }
+        val visible = listing?.second.orEmpty()
+        val listingPending = listing?.first !== listingRequest
 
         if (showFolderSearchDialog) {
             TvInputDialog(
@@ -677,27 +709,16 @@ class MainActivity : ComponentActivity() {
                 val batch = model.entries.filter { it.uri in model.marked }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${batch.size} selected")
-                    Button(enabled = !model.mutating, onClick = { model.marked = model.entries.filter(::matchesFilter).map { it.uri }.toSet() }) { Text("Select all visible") }
+                    Button(enabled = !model.mutating && !model.busy && !listingPending, onClick = { model.marked = visible.map { it.uri }.toSet() }) { Text("Select all visible") }
                     Button(enabled = !model.mutating && batch.isNotEmpty(), onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }) { Text("Copy selected") }
                     Button(enabled = !model.mutating && writable && batch.isNotEmpty() && batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }) { Text("Move selected") }
                 }
-            }
-            val visible = remember(model.entries, model.search, category, homeSearch, sortIndex) {
-                val names = compareBy<Entry, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name }
-                val order = when (sortIndex) {
-                    1 -> names.reversed()
-                    2 -> compareByDescending<Entry> { it.size }.then(names)
-                    3 -> compareBy<Entry> { if (it.size < 0) Long.MAX_VALUE else it.size }.then(names)
-                    else -> names
-                }
-                model.entries.filter(::matchesFilter)
-                    .sortedWith(compareBy<Entry> { !it.directory }.then(order))
             }
             val select: (Entry) -> Unit = { entry ->
                 if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri
                 else openEntry(entry)
             }
-            if (!model.busy && visible.isEmpty() && model.error == null) {
+            if (!model.busy && !listingPending && visible.isEmpty() && model.error == null) {
                 Text(when {
                     model.search.isNotEmpty() || homeSearch.isNotEmpty() -> "No files match your search."
                     category != null -> stringResource(R.string.explorer_no_category_files)
@@ -716,8 +737,8 @@ class MainActivity : ComponentActivity() {
             }
             val renderEntry: @Composable (Entry) -> Unit = { entry ->
                 val restoring = entry.uri == restoreEntry
-                if (restoring) LaunchedEffect(entry.uri, model.busy) {
-                    if (!model.busy && entryFocus.requestFocus()) returnEntries.remove(parent)
+                if (restoring) LaunchedEffect(entry.uri, model.busy, listingPending) {
+                    if (!model.busy && !listingPending && entryFocus.requestFocus()) returnEntries.remove(parent)
                 }
                 val action = if (model.multi) null else ({
                     returnEntries[parent] = entry.uri
@@ -729,7 +750,7 @@ class MainActivity : ComponentActivity() {
                     revision = model.revision,
                     grid = gridView,
                     selected = model.multi && entry.uri in model.marked,
-                    enabled = !model.mutating && !model.busy,
+                    enabled = !model.mutating && !model.busy && !listingPending,
                     onClick = { select(entry) },
                     onLongClick = action,
                     modifier = Modifier.fillMaxWidth().then(
