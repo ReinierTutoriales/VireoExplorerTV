@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 private data class InstalledApp(val name: String, val pkg: String, val system: Boolean)
 
 @Composable
-internal fun AppManager(onClose: () -> Unit) {
+internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     val context = LocalContext.current
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -37,6 +37,7 @@ internal fun AppManager(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     var showSystem by rememberSaveable { mutableStateOf(false) }
     var revision by remember { mutableIntStateOf(0) }
+    val roots = remember(revision) { context.contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri } }
     fun open(intent: Intent) {
         try { context.startActivity(intent) }
         catch (_: Exception) { error = "System action unavailable on this device" }
@@ -76,6 +77,13 @@ internal fun AppManager(onClose: () -> Unit) {
         error?.let { Text(it) }
         if (loading) Text("Loading applications…")
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Text("Cleanup — authorized folders") }
+            items(roots, key = { "cleanup:$it" }) { root ->
+                Button(onClick = { onAnalyze(root) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Analyze: " + android.provider.DocumentsContract.getTreeDocumentId(root))
+                }
+            }
+            item { Text("Applications") }
             items(apps.filter { showSystem || !it.system }, key = { it.pkg }) { app ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))) }, modifier = Modifier.weight(1f)) {

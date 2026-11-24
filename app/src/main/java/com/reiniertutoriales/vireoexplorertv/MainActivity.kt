@@ -96,6 +96,12 @@ class MainActivity : ComponentActivity() {
         }
         val writable = model.roots.any { it in writableRoots && storage.root(it) == model.path.firstOrNull()?.first }
         LaunchedEffect(parent, model.revision) { model.load(parent) }
+        var cleanupRoot by remember { mutableStateOf<Uri?>(null) }
+        val selectedCleanupRoot = cleanupRoot
+        if (model.appsOpen && selectedCleanupRoot != null && selectedCleanupRoot in model.roots) {
+            StorageAnalysis(storage, storage.root(selectedCleanupRoot), onClose = { cleanupRoot = null })
+            return
+        }
         if (model.scanOpen && parent != null) {
             StorageAnalysis(storage, parent, onClose = { model.scanOpen = false })
             return
@@ -105,7 +111,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (model.appsOpen) {
-            AppManager(onClose = { model.appsOpen = false })
+            AppManager(onClose = { cleanupRoot = null; model.appsOpen = false }, onAnalyze = { cleanupRoot = it })
             return
         }
         val video = model.viewing?.let { it.copy(mime = mediaMime(it.name, it.mime)) }?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
