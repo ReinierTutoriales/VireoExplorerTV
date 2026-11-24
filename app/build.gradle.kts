@@ -8,6 +8,7 @@ android {
  buildTypes { release { isMinifyEnabled = true; isShrinkResources = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt")) } }
 }
 dependencies {
+    implementation(libs.commons.compress)
     implementation(libs.datastore.preferences)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.savedstate)
