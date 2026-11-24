@@ -19,3 +19,6 @@ Read [architecture](docs/ARCHITECTURE.md) and [execution](docs/EXECUTION.md) bef
 
 ## AMOLED TV UI
 Mandatory native Jetpack Compose for TV and AndroidX TV Material, latest compatible stable versions verified against official releases. Pure black #000000 window and content background; #121212 surfaces, #80DCC0 mint accent, #F2F4F3 primary text. Centralize tokens in VireoTheme; preserve native TV focus, typography and D-pad behavior. No mobile-only Material components or unnecessary UI libraries. Verify startup, focus contrast, back navigation and accessibility. Theme source introduced in 147e72c; build and visual acceptance remain unverified.
+
+## Licensing
+Project-owned code, assets and documentation are proprietary, all rights reserved. Do not relicense or publish source without owner authorization. Preserve third-party notices and license rights; verify compatibility with proprietary distribution before adding dependencies or upstream code. Flag copyleft obligations before integration. Repository visibility is a separate owner decision.
