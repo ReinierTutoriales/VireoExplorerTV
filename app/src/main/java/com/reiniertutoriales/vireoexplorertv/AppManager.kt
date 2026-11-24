@@ -1,6 +1,7 @@
 package com.reiniertutoriales.vireoexplorertv
 
 import android.content.Intent
+import android.annotation.TargetApi
 import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.provider.Settings
@@ -99,7 +100,9 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
                             buildMap {
                                 for (app in snapshot) {
                                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                                    try { put(app.pkg, applicationStorage(context, app.pkg)) }
+                                    try {
+                                        if (android.os.Build.VERSION.SDK_INT >= 26) put(app.pkg, applicationStorage(context, app.pkg))
+                                    }
                                     catch (e: CancellationException) { throw e }
                                     catch (_: Exception) { /* unavailable for this package */ }
                                 }
@@ -161,10 +164,11 @@ internal fun AppManager(onClose: () -> Unit, onAnalyze: (Uri) -> Unit) {
     }
 }
 
+@TargetApi(26)
 private fun applicationStorage(context: android.content.Context, pkg: String): AppSize {
     check(android.os.Build.VERSION.SDK_INT >= 26)
     val info = context.packageManager.getApplicationInfo(pkg, 0)
-    val manager = context.getSystemService(android.app.usage.StorageStatsManager::class.java)
+    val manager = requireNotNull(context.getSystemService(android.app.usage.StorageStatsManager::class.java))
     val stats = manager.queryStatsForPackage(info.storageUuid, pkg, android.os.Process.myUserHandle())
     return AppSize(stats.appBytes, stats.dataBytes, stats.cacheBytes)
 }
