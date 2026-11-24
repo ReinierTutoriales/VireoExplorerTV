@@ -41,3 +41,5 @@ CI 45429056502 passed. Consolidated SMB connection lifecycle and authentication;
 CI 45430026684 passed. Added SMB upload from SAF OpenDocument using FILE_CREATE (no overwrite), bounded streaming, cancellation and remote SHA-256 verification. Partial remote files may remain on failure; no automatic destructive cleanup. New CI and server integration pending.
 
 CI 45430913449 passed. Added seekable SMB Media3 DataSource and reused MediaViewer for remote audio/video. No full-file download or new dependency. Runtime server, seek and codec tests pending; new CI pending.
+
+CI 45431467789 passed. Added SMB folder creation and non-replacing rename for files and directories, shared name validation and unit tests. Case-only rename deliberately rejected; remote deletion not yet enabled. New CI and server validation pending.

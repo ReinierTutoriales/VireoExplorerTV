@@ -95,7 +95,7 @@ private suspend fun uploadSmb(endpoint: SmbEndpoint, folder: List<String>, resol
         check(it.moveToFirst())
         it.getString(0)
     }
-    require(validName(name) && !name.contains(':') && !name.endsWith('.') && !name.endsWith(' '))
+    require(validSmbName(name))
     val path = (folder + name).joinToString("\\")
     val buffer = ByteArray(128 * 1024)
     val digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -133,6 +133,30 @@ private suspend fun uploadSmb(endpoint: SmbEndpoint, folder: List<String>, resol
         }
     }
     check(verified == total && expected.contentEquals(digest.digest())) { "Remote verification failed" }
+}
+
+internal fun validSmbName(name: String): Boolean =
+    validName(name) && name.none { it in ":*?\"<>|" || it.code < 32 } &&
+        !name.endsWith('.') && !name.endsWith(' ')
+
+private suspend fun createSmbFolder(endpoint: SmbEndpoint, folder: List<String>, name: String) = withSmbShare(endpoint) { share ->
+    require(validSmbName(name))
+    share.mkdir((folder + name).joinToString("\\"))
+}
+
+private suspend fun renameSmbEntry(endpoint: SmbEndpoint, folder: List<String>, entry: SmbEntry, name: String) = withSmbShare(endpoint) { share ->
+    require(validSmbName(name) && validSmbName(entry.name))
+    val source = (folder + entry.name).joinToString("\\")
+    val target = (folder + name).joinToString("\\")
+    require(!source.equals(target, ignoreCase = true))
+    val options = if (entry.directory) SMB2CreateOptions.FILE_DIRECTORY_FILE else SMB2CreateOptions.FILE_NON_DIRECTORY_FILE
+    if (entry.directory) {
+        share.openDirectory(source, EnumSet.of(AccessMask.DELETE), null, EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
+            SMB2CreateDisposition.FILE_OPEN, EnumSet.of(options)).use { it.rename(target, false) }
+    } else {
+        share.openFile(source, EnumSet.of(AccessMask.DELETE), null, EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
+            SMB2CreateDisposition.FILE_OPEN, EnumSet.of(options)).use { it.rename(target, false) }
+    }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -197,6 +221,27 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             finally { loading = false }
         }
     }
+    fun editName(title: String, initial: String, action: suspend (String) -> Unit) {
+        val field = EditText(context).apply { setSingleLine(true); setText(initial); selectAll() }
+        val dialog = AlertDialog.Builder(context).setTitle(title).setView(field)
+            .setNegativeButton("Cancel", null).setPositiveButton("OK", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = field.text.toString()
+                if (!validSmbName(name)) field.error = "Invalid SMB name"
+                else {
+                    dialog.dismiss()
+                    transfer = scope.launch {
+                        try { action(name); status = "Operation completed" }
+                        catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { status = "Operation failed: name conflict, access or connection" }
+                        finally { transfer = null; refresh++ }
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
     val media = playback
     if (media != null && server != null) {
         val uri = android.net.Uri.Builder().scheme("smb").authority(server.host).appendPath(server.share).appendPath(media.first).build()
@@ -234,6 +279,11 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             Button(enabled = server != null && !loading && transfer == null && pending == null, onClick = {
                 try { upload.launch(arrayOf("*/*")) } catch (_: Exception) { status = "System file picker unavailable" }
             }) { Text("Upload") }
+            Button(enabled = server != null && !loading && transfer == null, onClick = {
+                val active = server ?: return@Button
+                val folder = path.toList()
+                editName("New remote folder", "") { createSmbFolder(active, folder, it) }
+            }) { Text("New folder") }
         }
         Text(path.joinToString(" / ").ifEmpty { server?.share ?: "Enter server credentials" })
         status?.let { Text(it) }
@@ -242,8 +292,9 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         error?.let { Text(it) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.name }) { entry ->
-                if (entry.directory) Button(enabled = transfer == null, onClick = { path = path + entry.name }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
-                else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (entry.directory) Button(enabled = transfer == null, onClick = { path = path + entry.name }, modifier = Modifier.weight(1f)) { Text(entry.name) }
+                else {
                     val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(entry.name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)).orEmpty()
                     if (mime.startsWith("video/") || mime.startsWith("audio/")) Button(enabled = transfer == null, onClick = { playback = (path + entry.name).joinToString("\\") to entry }) { Text("Play") }
                     Button(enabled = transfer == null && pending == null && entry.bytes >= 0, onClick = {
@@ -251,6 +302,12 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     try { destination.launch(entry.name) }
                     catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
                 }, modifier = Modifier.weight(1f)) { Text("Download ${entry.name} · ${entry.bytes / 1024} KiB") }
+                }
+                Button(enabled = server != null && transfer == null && !loading, onClick = {
+                    val active = server ?: return@Button
+                    val folder = path.toList()
+                    editName("Rename remote item", entry.name) { renameSmbEntry(active, folder, entry, it) }
+                }) { Text("Rename") }
                 }
             }
         }
