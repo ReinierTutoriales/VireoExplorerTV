@@ -63,7 +63,9 @@ class MainActivity : ComponentActivity() {
             if (result.resultCode == android.app.Activity.RESULT_OK && uri != null) try {
                 val granted = (result.data?.flags ?: 0) and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 check(granted and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) { "Read access not granted" }
-                contentResolver.takePersistableUriPermission(uri, granted)
+                if (granted and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                } else contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 roots = contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }
                 path = listOf(storage.root(uri) to "Storage")
             } catch (e: Exception) { error = e.localizedMessage ?: "Permission unavailable" }
@@ -85,6 +87,10 @@ class MainActivity : ComponentActivity() {
             onDispose { lifecycle.removeObserver(observer) }
         }
         LaunchedEffect(roots) { writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet() }
+        var volumes by remember { mutableStateOf<List<VolumeInfo>>(emptyList()) }
+        LaunchedEffect(Unit) {
+            observeVolumes(this@MainActivity).collect { volumes = it }
+        }
         val parent = path.lastOrNull()?.first
         val writable = roots.any { it in writableRoots && storage.root(it) == path.firstOrNull()?.first }
         LaunchedEffect(parent, revision) {
@@ -207,6 +213,7 @@ class MainActivity : ComponentActivity() {
                     Button(enabled = !mutating, onClick = { selected = null }) { Text("Close") }
                 }
             } else if(parent == null) {
+                volumes.forEach { volume -> Text(volume.label + " · " + volume.state + if (volume.removable) " · Removable" else "") }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(roots, key = { it.toString() }) { uri ->
                         Button(onClick = { path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri)) }) { Text(DocumentsContract.getTreeDocumentId(uri)) }

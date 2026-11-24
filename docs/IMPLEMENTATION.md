@@ -57,3 +57,5 @@ CI 45434880043 passed. Extracted reusable streaming SHA-256 transfer primitive a
 Migrated local SAF copy/move to the same bounded JCA SHA-256 streaming primitive as SMB. Preserved progress, destination verification and source recheck before deletion. No new dependencies. CI pending; provider operations are not atomic.
 
 CI 45438969655 passed. Consolidated SAF provider navigation into the main explorer; removed redundant NetworkBrowser. SAF picker now persists only returned read/write grants; refreshes grants on resume and gates write UI. Direct SMB remains separate. New CI pending; runtime grant revocation and picker compatibility require validation.
+
+CI 45440710021 failed WrongConstant on persistable permission flags. Fixed explicit read or read/write constants, no lint suppression. Added StorageManager volume inventory and media mount/unmount observation, grant revalidation in SAF backend, metadata revalidation for rename/delete and cancellable directory iteration. Volume inventory is informational, access still requires SAF grant. New CI pending.
