@@ -8,4 +8,13 @@ android {
  buildTypes { release { isMinifyEnabled = true; isShrinkResources = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt")) } }
 }
 dependencies {
-    implementation(libs.smbj) implementation(libs.media3.exoplayer); implementation(libs.media3.ui); implementation(libs.media3.session); implementation(libs.tv.material); implementation(libs.compose.foundation); implementation(libs.activity.compose); implementation(libs.coroutines); testImplementation("junit:junit:4.13.2") }
+    implementation(libs.smbj)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.session)
+    implementation(libs.tv.material)
+    implementation(libs.compose.foundation)
+    implementation(libs.activity.compose)
+    implementation(libs.coroutines)
+    testImplementation("junit:junit:4.13.2")
+}

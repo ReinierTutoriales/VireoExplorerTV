@@ -22,17 +22,19 @@ import kotlinx.coroutines.*
 import java.util.concurrent.TimeUnit
 
 private class SmbEndpoint(val host: String, val share: String, val user: String, val domain: String, val password: CharArray)
-private data class SmbEntry(val name: String, val directory: Boolean)
+private data class SmbEntry(val name: String, val directory: Boolean, val bytes: Long)
 
 private suspend fun listSmb(endpoint: SmbEndpoint, path: String): List<SmbEntry> = withContext(Dispatchers.IO) {
     val config = SmbConfig.builder().withTimeout(10, TimeUnit.SECONDS)
         .withSoTimeout(10, TimeUnit.SECONDS).withSigningRequired(true).build()
     SMBClient(config).use { client ->
         client.connect(endpoint.host).use { connection ->
-            val session = connection.authenticate(AuthenticationContext(endpoint.user, endpoint.password, endpoint.domain))
+            val password = endpoint.password.copyOf()
+            val session = try { connection.authenticate(AuthenticationContext(endpoint.user, password, endpoint.domain)) }
+            finally { password.fill('\u0000') }
             (session.connectShare(endpoint.share) as DiskShare).use { share ->
                 share.list(path).asSequence().filter { it.fileName != "." && it.fileName != ".." }
-                    .take(5001).map { SmbEntry(it.fileName, it.fileAttributes and 16L != 0L) }
+                    .take(5001).map { SmbEntry(it.fileName, it.fileAttributes and 16L != 0L, it.endOfFile) }
                     .toList().also { check(it.size <= 5000) { "Directory limit exceeded" } }
                     .sortedWith(compareByDescending<SmbEntry> { it.directory }.thenBy { it.name.lowercase(java.util.Locale.ROOT) })
             }
@@ -50,14 +52,14 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
     val server = endpoint
-    DisposableEffect(server) { onDispose { server?.password?.fill('\\u0000') } }
+    DisposableEffect(server) { onDispose { server?.password?.fill('\u0000') } }
     fun back() { if (path.isNotEmpty()) path = path.dropLast(1) else onClose() }
     BackHandler { back() }
     LaunchedEffect(server, path, refresh) {
         entries = emptyList(); error = null
         if (server != null) {
             loading = true
-            try { entries = listSmb(server, path.joinToString("\\\\")) }
+            try { entries = listSmb(server, path.joinToString("\\")) }
             catch (e: CancellationException) { throw e }
             catch (_: Exception) { error = "SMB connection or access failed" }
             finally { loading = false }
@@ -77,7 +79,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     .setPositiveButton("Connect") { _, _ ->
                         val host = fields[0].text.toString().trim()
                         val share = fields[1].text.toString().trim()
-                        if (host.isBlank() || share.isBlank() || host.contains('/') || share.contains('/') || share.contains('\\\\')) {
+                        if (host.isBlank() || share.isBlank() || host.contains('/') || share.contains('/') || share.contains('\\')) {
                             error = "Enter a valid server and share"
                         } else {
                             endpoint = SmbEndpoint(host, share, fields[2].text.toString(), fields[3].text.toString(), fields[4].text.toString().toCharArray())
@@ -94,7 +96,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(entries, key = { it.name }) { entry ->
                 if (entry.directory) Button(onClick = { path = path + entry.name }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
-                else Text(entry.name)
+                else Text("${entry.name} · ${entry.bytes / 1024} KiB")
             }
         }
     }
