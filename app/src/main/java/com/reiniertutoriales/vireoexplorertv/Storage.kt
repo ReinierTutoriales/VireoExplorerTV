@@ -33,7 +33,57 @@ class Storage(private val resolver: ContentResolver) {
             }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
         }
     }
-    suspend fun extractZip(entry: Entry, parent: Uri) = withContext(Dispatchers.IO) {
+    suspend fun createZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
+        requireGrant(entry.uri)
+        requireGrant(parent, true)
+        revalidate(entry)
+        val name = entry.name + ".zip"
+        require(validName(name))
+        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
+        val plan = mutableListOf<Pair<Entry, String>>()
+        val seen = HashSet<Uri>()
+        suspend fun visit(item: Entry, path: String, depth: Int) {
+            coroutineContext.ensureActive()
+            check(depth <= 32 && plan.size < 10000 && seen.add(item.uri)) { "Archive traversal limit or repeated document" }
+            zipPath(path)
+            plan.add(item to path)
+            if (item.directory) for (child in children(item.uri)) visit(child, path + "/" + child.name, depth + 1)
+        }
+        visit(entry, entry.name, 1)
+        val target = checkNotNull(D.createDocument(resolver, parent, "application/zip", name))
+        var total = 0L
+        val buffer = ByteArray(64 * 1024)
+        try {
+            java.util.zip.ZipOutputStream(checkNotNull(resolver.openOutputStream(target, "w")).buffered()).use { zip ->
+                for ((item, path) in plan) {
+                    coroutineContext.ensureActive()
+                    revalidate(item)
+                    zip.putNextEntry(java.util.zip.ZipEntry(if (item.directory) path + "/" else path))
+                    if (!item.directory) {
+                        var bytes = 0L
+                        checkNotNull(resolver.openInputStream(item.uri)).use { input ->
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                bytes += n
+                                total += n
+                                check(total <= 4L * 1024 * 1024 * 1024) { "Archive input limit exceeded" }
+                                zip.write(buffer, 0, n)
+                                progress(total)
+                            }
+                        }
+                        check(item.size < 0 || bytes == item.size) { "Source size changed" }
+                    }
+                    zip.closeEntry()
+                }
+            }
+        } catch (e: Exception) {
+            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, target) } }
+            throw e
+        }
+    }
+    suspend fun extractZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
         revalidate(entry)
@@ -83,6 +133,7 @@ class Storage(private val resolver: ContentResolver) {
                                     total += n
                                     check(total <= 4L * 1024 * 1024 * 1024) { "Extraction size limit exceeded" }
                                     output.write(buffer, 0, n)
+                                    progress(total)
                                 }
                             }
                         } catch (e: Exception) {

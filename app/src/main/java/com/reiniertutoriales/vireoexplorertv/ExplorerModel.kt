@@ -105,6 +105,20 @@ internal class ExplorerModel(application: Application, private val savedState: S
             }
         }
 
+    fun archive(action: suspend ((Long) -> Unit) -> Unit) {
+        if (mutating) return
+        mutating = true
+        mutableProgress.value = 0
+        error = null
+        transferJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try { action { mutableProgress.value = it }; selected = null }
+            catch (e: CancellationException) { error = "Archive operation cancelled; partial output may remain"; throw e }
+            catch (e: Exception) { error = e.localizedMessage ?: "Archive operation failed" }
+            finally { mutating = false; transferJob = null; revision++ }
+        }
+        transferJob?.start()
+    }
+
     fun paste(destination: Uri) {
         if (mutating) return
         val pending = clipboard ?: return
