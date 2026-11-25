@@ -299,6 +299,45 @@ def search_pagination(tv, output):
     print("PASS Search continues to a second page", flush=True)
 
 
+def media_playback(tv, label):
+    tv.select("vireo-playback.wav")
+    pattern = re.compile(r"^(\d+):(\d{2}) / 0:40$")
+    def position():
+        node = tv.find(lambda n: pattern.fullmatch(n.get("text") or "") is not None,
+                       "40-second audio timeline")
+        m = pattern.fullmatch(node.get("text"))
+        return int(m[1]) * 60 + int(m[2])
+    deadline = time.monotonic() + 15
+    while position() < 2:
+        if time.monotonic() > deadline:
+            raise AssertionError("Playback did not advance")
+        time.sleep(0.5)
+    tv.key("MEDIA_PLAY_PAUSE")
+    tv.text("Play")
+    before = position()
+    time.sleep(1.5)
+    if abs(position() - before) > 1:
+        raise AssertionError("Paused audio continued advancing")
+    tv.key("MEDIA_FAST_FORWARD")
+    if position() < before + 8:
+        raise AssertionError("Audio seek did not advance by approximately ten seconds")
+    tv.key("MEDIA_PLAY_PAUSE")
+    tv.text("Pause")
+    tv.key("BACK")
+    tv.text("vireo-playback.wav")
+    print(f"PASS {label} audio playback, pause, seek, resume and exit", flush=True)
+
+
+def local_media(tv, fixture):
+    tv.storage_access(True)
+    tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
+    tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
+    tv.launch()
+    tv.select("Internal")
+    tv.select("000-Vireo-media")
+    media_playback(tv, "local release")
+
+
 def smb(tv, fixture, variant, user, password):
     tv.adb("install", "-r", fixture)
     tv.adb("shell", "pm", "clear", PACKAGE)
@@ -311,6 +350,7 @@ def smb(tv, fixture, variant, user, password):
     tv.submit_smb()
     tv.text("vireo-smb-fixture.txt")
     print(f"PASS {variant} authenticated SMB directory listing", flush=True)
+    media_playback(tv, f"{variant} SMB")
 
 
 if __name__ == "__main__":
@@ -319,6 +359,7 @@ if __name__ == "__main__":
     parser.add_argument("--release", required=True)
     parser.add_argument("--debug", required=True)
     parser.add_argument("--hierarchy", required=True)
+    parser.add_argument("--media-fixture", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--smb-user", required=True)
     args = parser.parse_args()
@@ -335,6 +376,7 @@ if __name__ == "__main__":
         ("storage", lambda: storage_and_timing(tv, args.output)),
         ("search", lambda: search_pagination(tv, args.output)),
         ("storage mutations", lambda: storage_mutations(tv, args.output)),
+        ("local media", lambda: local_media(tv, args.media_fixture)),
         ("release SMB", lambda: smb(tv, args.release, "release", args.smb_user, password)),
         ("debug SMB", lambda: smb(tv, args.debug, "debug", args.smb_user, password)),
     ]

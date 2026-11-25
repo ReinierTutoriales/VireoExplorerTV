@@ -67,8 +67,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
         }
     }
-    var subtitle by remember(entry.uri) { mutableStateOf<Uri?>(null) }
-    var subtitleMime by remember(entry.uri) { mutableStateOf<String?>(null) }
+    var manualSubtitle by remember(entry.uri) { mutableStateOf<MediaItem.SubtitleConfiguration?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -77,7 +76,12 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                         ?.use { if (it.moveToFirst()) it.getString(0) else null }
                 }
                 val mime = subtitleMimeForName(name.orEmpty())
-                if (mime != null) { subtitleMime = mime; subtitle = uri; subtitleError = null }
+                if (mime != null) {
+                    manualSubtitle = MediaItem.SubtitleConfiguration.Builder(uri)
+                        .setMimeType(mime).setLabel(name ?: uri.lastPathSegment ?: "External subtitle")
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
+                    subtitleError = null
+                }
                 else subtitleError = "Unsupported subtitle format"
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { subtitleError = "Cannot read subtitle" }
@@ -121,29 +125,21 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     var tracks by remember(entry.uri) { mutableStateOf(Tracks.EMPTY) }
     var trackType by remember(entry.uri) { mutableIntStateOf(C.TRACK_TYPE_UNKNOWN) }
     fun buildConfiguredMediaItem(): MediaItem {
-        val uri = subtitle
-        val mime = subtitleMime
-        val subs = if (uri != null && mime != null) {
-            val manual = MediaItem.SubtitleConfiguration.Builder(uri)
-                .setMimeType(mime)
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                .build()
-            automaticSubtitles.filter { it.uri != uri } + manual
-        } else {
-            automaticSubtitles
-        }
+        val manual = manualSubtitle
+        val subs = if (manual != null) automaticSubtitles.filter { it.uri != manual.uri } + manual
+            else automaticSubtitles
         return MediaItem.Builder().setUri(entry.uri).setSubtitleConfigurations(subs).build()
     }
-    LaunchedEffect(subtitle, subtitleMime, player) {
+    LaunchedEffect(manualSubtitle, automaticSubtitles, player) {
         val p = player
-        val uri = subtitle
-        val mime = subtitleMime
-        if (p != null && uri != null && mime != null) {
+        if (p != null) {
             val item = buildConfiguredMediaItem()
             if (p.currentMediaItem?.localConfiguration?.subtitleConfigurations != item.localConfiguration?.subtitleConfigurations) {
                 val position = p.currentPosition
                 p.setMediaItem(item, position)
-                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).clearOverridesOfType(C.TRACK_TYPE_TEXT).build()
+                if (manualSubtitle != null) {
+                    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).clearOverridesOfType(C.TRACK_TYPE_TEXT).build()
+                }
                 p.prepare()
             }
         }
@@ -152,11 +148,11 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     LifecycleStartEffect(entry.uri, sourceFactory, retry) {
         var session: MediaSession? = null
         var active: ExoPlayer? = null
-        var position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
+        val position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
         fun stop() {
             active?.let {
-                position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L)
-                saveBoundedResumePosition(prefs, entry.uri.toString(), position)
+                val resume = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L)
+                saveBoundedResumePosition(prefs, entry.uri.toString(), resume)
                 wantsPlayback = it.playWhenReady && it.playbackState != Player.STATE_ENDED
                 savedTrackParameters = it.trackSelectionParameters
                 session?.release()
@@ -201,9 +197,10 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
             })
             session = MediaSession.Builder(context, p).build()
+            val resumePlayback = wantsPlayback
             p.setMediaItem(buildConfiguredMediaItem(), position)
+            p.playWhenReady = resumePlayback
             p.prepare()
-            p.playWhenReady = wantsPlayback
             player = p
         }
         error = null
@@ -237,8 +234,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             else -> closeFocus.requestFocus()
         }
     }
-    LaunchedEffect(error) {
-        if (error != null) controlsVisible = true
+    LaunchedEffect(error, subtitleError, buffering) {
+        if (error != null || subtitleError != null || buffering) controlsVisible = true
     }
     BackHandler {
         if (subtitleError != null) subtitleError = null
