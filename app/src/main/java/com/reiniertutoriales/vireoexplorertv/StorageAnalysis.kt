@@ -2,23 +2,22 @@ package com.reiniertutoriales.vireoexplorertv
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import androidx.compose.ui.platform.LocalContext
-import android.app.AlertDialog
 
 @Composable
 internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onClose: () -> Unit) {
@@ -32,6 +31,9 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onC
     var removedBytes by remember(root) { mutableLongStateOf(0L) }
     var unknownSizes by remember(root) { mutableIntStateOf(0) }
     var failed by remember(root) { mutableIntStateOf(0) }
+    var confirmBatchDelete by remember { mutableStateOf(false) }
+    var confirmDuplicateDelete by remember { mutableStateOf<Pair<Entry, Entry>?>(null) }
+
     fun recordRemoval(entry: Entry) {
         removed++
         if (!entry.directory) {
@@ -49,6 +51,59 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onC
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = e.localizedMessage ?: "Analysis failed" }
     }
+
+    val report = result
+    val targets = remember(report, selected) {
+        report?.candidates.orEmpty().filter {
+            it.uri in selected && it.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0
+        }
+    }
+
+    if (confirmBatchDelete && targets.isNotEmpty()) {
+        TvConfirmDialog(
+            title = "Permanently delete selected entries?",
+            message = "${targets.size} selected entries. Each will be checked again before deletion.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                deleting = true
+                scope.launch {
+                    var batchFailures = 0
+                    try {
+                        for (entry in targets) {
+                            try {
+                                storage.cleanCandidate(entry)
+                                recordRemoval(entry)
+                            } catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { failed++; batchFailures++ }
+                        }
+                        error = if (batchFailures > 0) "$batchFailures selected entries could not be deleted" else null
+                    } finally { deleting = false; revision++ }
+                }
+            },
+            onDismiss = { confirmBatchDelete = false }
+        )
+    }
+
+    val duplicatePair = confirmDuplicateDelete
+    if (duplicatePair != null) {
+        val (entry, keep) = duplicatePair
+        TvConfirmDialog(
+            title = "Delete duplicate?",
+            message = "Delete ${entry.name} and retain ${keep.name}?",
+            confirmLabel = "Delete",
+            onConfirm = {
+                deleting = true
+                scope.launch {
+                    try { storage.removeDuplicate(entry, keep); recordRemoval(entry); error = null }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failed++; error = e.localizedMessage ?: "Duplicate deletion failed" }
+                    finally { deleting = false; revision++ }
+                }
+            },
+            onDismiss = { confirmDuplicateDelete = null }
+        )
+    }
+
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Storage analysis", style = MaterialTheme.typography.headlineMedium)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -64,7 +119,6 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onC
         }
         if (!writable) Text("Read-only folder. You can analyze files here.")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        val report = result
         if (deleting) Text("Deleting selected files…")
         if (report == null && error == null) Text("Analyzing accessible files…")
         if (report != null) {
@@ -73,35 +127,22 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onC
             if (mode == 2) {
                 if (report.candidates.isEmpty()) Text("No cleanup candidates found.")
                 else if (writable) Text("Select candidates individually. Files may still be needed.")
-                val targets = report.candidates.filter { it.uri in selected && it.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = writable && !deleting && targets.isNotEmpty(), onClick = {
-                        AlertDialog.Builder(context).setTitle("Permanently delete selected entries?")
-                            .setMessage("${targets.size} selected entries. Each will be checked again before deletion.")
-                            .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
-                                deleting = true
-                                scope.launch {
-                                    var batchFailures = 0
-                                    try {
-                                        for (entry in targets) {
-                                            try {
-                                                storage.cleanCandidate(entry)
-                                                recordRemoval(entry)
-                                            } catch (e: CancellationException) { throw e }
-                                            catch (_: Exception) { failed++; batchFailures++ }
-                                        }
-                                        error = if (batchFailures > 0) "$batchFailures selected entries could not be deleted" else null
-                                    } finally { deleting = false; revision++ }
-                                }
-                            }.show().getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus()
-                    }) { Text("Delete selected (${targets.size})") }
+                    Button(
+                        enabled = writable && !deleting && targets.isNotEmpty(),
+                        onClick = { confirmBatchDelete = true }
+                    ) { Text("Delete selected (${targets.size})") }
                     Button(enabled = !deleting && selected.isNotEmpty(), onClick = { selected = emptySet() }) { Text("Clear selection") }
                 }
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(report.candidates, key = { it.uri.toString() }) { entry ->
-                        Button(enabled = writable && !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0, onClick = {
-                            selected = if (entry.uri in selected) selected - entry.uri else selected + entry.uri
-                        }, modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            enabled = writable && !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0,
+                            onClick = {
+                                selected = if (entry.uri in selected) selected - entry.uri else selected + entry.uri
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Column {
                                 Text((if (entry.uri in selected) "Selected: " else "Select: ") + entry.name)
                                 Text(if (entry.directory) "Empty folder" else cleanupReason(entry.name).orEmpty())
@@ -119,20 +160,10 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onC
                         val keep = group.first()
                         Text("Keep: ${keep.name} · ${keep.uri}")
                         group.drop(1).forEach { entry ->
-                            Button(enabled = writable && !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0, onClick = {
-                                AlertDialog.Builder(context).setTitle("Delete duplicate?")
-                                    .setMessage("Delete ${entry.name} and retain ${keep.name}?")
-                                    .setNegativeButton("Cancel", null)
-                                    .setPositiveButton("Delete") { _, _ ->
-                                        deleting = true
-                                        scope.launch {
-                                            try { storage.removeDuplicate(entry, keep); recordRemoval(entry); error = null }
-                                            catch (e: CancellationException) { throw e }
-                                            catch (e: Exception) { failed++; error = e.localizedMessage ?: "Duplicate deletion failed" }
-                                            finally { deleting = false; revision++ }
-                                        }
-                                    }.show().getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus()
-                            }) { Text("Review: ${entry.name} · ${entry.uri}") }
+                            Button(
+                                enabled = writable && !deleting && entry.flags and android.provider.DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0,
+                                onClick = { confirmDuplicateDelete = entry to keep }
+                            ) { Text("Review: ${entry.name} · ${entry.uri}") }
                         }
                     }
                 }

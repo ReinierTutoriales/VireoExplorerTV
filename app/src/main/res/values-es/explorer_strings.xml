@@ -10,9 +10,13 @@
     <string name="explorer_storage">Almacenamiento</string>
     <string name="explorer_categories">Categorías</string>
     <string name="explorer_internal">Interno</string>
+    <string name="explorer_internal_subtitle">Almacenamiento compartido</string>
     <string name="explorer_usb">USB</string>
+    <string name="explorer_usb_subtitle">Unidades extraíbles y SD</string>
     <string name="explorer_local_network">Red local</string>
+    <string name="explorer_local_network_subtitle">Recursos SMB2/3 y streaming</string>
     <string name="explorer_folders">Carpetas</string>
+    <string name="explorer_folders_subtitle">Rutas autorizadas y recientes</string>
     <string name="explorer_videos">Vídeos</string>
     <string name="explorer_audio">Audio</string>
     <string name="explorer_photos">Fotos</string>
@@ -45,10 +49,12 @@
     <string name="explorer_clear_filter">Quitar: %1$s</string>
     <plurals name="explorer_copy_queue">
         <item quantity="one">Selección para copiar: %1$d archivo</item>
+        <item quantity="many">Selección para copiar: %1$d archivos</item>
         <item quantity="other">Selección para copiar: %1$d archivos</item>
     </plurals>
     <plurals name="explorer_move_queue">
         <item quantity="one">Selección para mover: %1$d archivo</item>
+        <item quantity="many">Selección para mover: %1$d archivos</item>
         <item quantity="other">Selección para mover: %1$d archivos</item>
     </plurals>
 </resources>

@@ -116,14 +116,26 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     }
     var tracks by remember { mutableStateOf(Tracks.EMPTY) }
     var trackType by remember { mutableIntStateOf(C.TRACK_TYPE_UNKNOWN) }
+    fun buildConfiguredMediaItem(): MediaItem {
+        val uri = subtitle
+        val mime = subtitleMime
+        val subs = if (uri != null && mime != null) {
+            val manual = MediaItem.SubtitleConfiguration.Builder(uri)
+                .setMimeType(mime)
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build()
+            automaticSubtitles.filter { it.uri != uri } + manual
+        } else {
+            automaticSubtitles
+        }
+        return MediaItem.Builder().setUri(entry.uri).setSubtitleConfigurations(subs).build()
+    }
     LaunchedEffect(subtitle, subtitleMime, player) {
         val p = player
         val uri = subtitle
         val mime = subtitleMime
         if (p != null && uri != null && mime != null) {
-            val manual = MediaItem.SubtitleConfiguration.Builder(uri).setMimeType(mime).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
-            val item = MediaItem.Builder().setUri(entry.uri)
-                .setSubtitleConfigurations(automaticSubtitles.filter { it.uri != uri } + manual).build()
+            val item = buildConfiguredMediaItem()
             if (p.currentMediaItem?.localConfiguration?.subtitleConfigurations != item.localConfiguration?.subtitleConfigurations) {
                 val position = p.currentPosition
                 p.setMediaItem(item, position)
@@ -138,7 +150,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         var active: ExoPlayer? = null
         var position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
         fun stop() {
-            active?.let { position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L); prefs.edit().putLong(entry.uri.toString(), position).apply(); session?.release(); session = null; it.release() }
+            active?.let {
+                position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L)
+                saveBoundedResumePosition(prefs, entry.uri.toString(), position)
+                session?.release()
+                session = null
+                it.release()
+            }
             active = null
             player = null
             playing = false
@@ -147,7 +165,10 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         fun start() {
             if (active != null) return
-            val builder = ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true)).setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(10000)
+            val builder = ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+                .setSeekBackIncrementMs(10000)
+                .setSeekForwardIncrementMs(10000)
+                .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS)
             if (sourceFactory != null) builder.setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context).setDataSourceFactory(sourceFactory))
             val p = builder.build()
             active = p
@@ -164,7 +185,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
             })
             session = MediaSession.Builder(context, p).build()
-            p.setMediaItem(MediaItem.Builder().setUri(entry.uri).setSubtitleConfigurations(automaticSubtitles).build(), position)
+            p.setMediaItem(buildConfiguredMediaItem(), position)
             p.prepare()
             p.playWhenReady = true
             player = p
@@ -205,12 +226,53 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         else onClose()
     }
     Box(Modifier.fillMaxSize().background(Color.Black).onPreviewKeyEvent { event ->
-        if (!controlsVisible && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
-            if (event.type == KeyEventType.KeyUp) { controlsVisible = true; interaction++ }
-            true
-        } else {
-            if (event.type == KeyEventType.KeyDown) interaction++
-            false
+        val p = player
+        val isFirstDown = event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0
+        when (event.key) {
+            Key.MediaPlayPause -> {
+                if (isFirstDown) {
+                    p?.let { if (it.isPlaying) it.pause() else it.play() }
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            }
+            Key.MediaPlay -> {
+                if (isFirstDown) { p?.play(); controlsVisible = true; interaction++ }
+                true
+            }
+            Key.MediaPause -> {
+                if (isFirstDown) { p?.pause(); controlsVisible = true; interaction++ }
+                true
+            }
+            Key.MediaFastForward -> {
+                if (event.type == KeyEventType.KeyDown) {
+                    if (p?.isCurrentMediaItemSeekable == true) p.seekForward()
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            }
+            Key.MediaRewind -> {
+                if (event.type == KeyEventType.KeyDown) {
+                    if (p?.isCurrentMediaItemSeekable == true) p.seekBack()
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            }
+            else -> if (!controlsVisible && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+                if (event.type == KeyEventType.KeyUp) {
+                    if (event.key == Key.DirectionLeft && p?.isCurrentMediaItemSeekable == true) p.seekBack()
+                    else if (event.key == Key.DirectionRight && p?.isCurrentMediaItemSeekable == true) p.seekForward()
+                    controlsVisible = true
+                    interaction++
+                }
+                true
+            } else {
+                if (event.type == KeyEventType.KeyDown) interaction++
+                false
+            }
         }
     }) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply {
@@ -266,10 +328,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         (error ?: subtitleError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (durationMs > 0) {
             val fraction = (positionMs.toDouble() / durationMs).coerceIn(0.0, 1.0).toFloat()
-            Canvas(Modifier.fillMaxWidth().height(4.dp)) {
-                drawRect(Color.DarkGray)
-                drawRect(Color(0xFF80DCC0), size = androidx.compose.ui.geometry.Size(size.width * fraction, size.height))
-            }
+            VireoProgressBar(progress = fraction, modifier = Modifier.padding(vertical = 4.dp))
             Text(playbackTime(positionMs) + " / " + playbackTime(durationMs))
         }
         val p = player
@@ -371,4 +430,46 @@ internal fun matchesSubtitle(mediaName: String, subtitleName: String): Boolean {
     val caption = subtitleName.substringBeforeLast('.')
     return media.isNotBlank() && (caption.equals(media, ignoreCase = true) ||
         caption.startsWith(media + ".", ignoreCase = true))
+}
+
+private const val RESUME_LRU_ORDER_KEY = "_lru_order"
+
+internal fun reconstructOrderedResumeMap(rawPositions: Map<String, Long>, encodedOrder: String?): LinkedHashMap<String, Long> {
+    val ordered = LinkedHashMap<String, Long>()
+    if (!encodedOrder.isNullOrBlank()) {
+        for (line in encodedOrder.lineSequence()) {
+            val key = line.trim()
+            val pos = rawPositions[key]
+            if (key.isNotEmpty() && key != RESUME_LRU_ORDER_KEY && pos != null && pos > 0L) {
+                ordered[key] = pos
+            }
+        }
+    }
+    for ((k, v) in rawPositions) {
+        if (k != RESUME_LRU_ORDER_KEY && k !in ordered && v > 0L) ordered[k] = v
+    }
+    return ordered
+}
+
+internal fun trimResumePositions(entries: Map<String, Long>, updatedKey: String, updatedPosition: Long, maxEntries: Int = 200): Map<String, Long> {
+    val result = LinkedHashMap<String, Long>()
+    for ((k, v) in entries) {
+        if (k != updatedKey && k != RESUME_LRU_ORDER_KEY && v > 0L) result[k] = v
+    }
+    if (updatedPosition > 0L) result[updatedKey] = updatedPosition
+    while (result.size > maxEntries) {
+        val oldest = result.keys.firstOrNull() ?: break
+        result.remove(oldest)
+    }
+    return result
+}
+
+private fun saveBoundedResumePosition(prefs: android.content.SharedPreferences, uriKey: String, position: Long) {
+    val raw = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+    val ordered = reconstructOrderedResumeMap(raw, prefs.getString(RESUME_LRU_ORDER_KEY, null))
+    val trimmed = trimResumePositions(ordered, uriKey, position, 200)
+    val editor = prefs.edit().clear()
+    for ((k, v) in trimmed) editor.putLong(k, v)
+    editor.putString(RESUME_LRU_ORDER_KEY, trimmed.keys.joinToString("\n"))
+    editor.apply()
 }

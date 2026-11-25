@@ -9,6 +9,7 @@ android {
 }
 dependencies {
     implementation(libs.datastore.preferences)
+    implementation(libs.exifinterface)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.savedstate)
     implementation(libs.smbj)
@@ -19,5 +20,5 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.activity.compose)
     implementation(libs.coroutines)
-    testImplementation("junit:junit:4.13.2")
+    testImplementation(libs.junit)
 }

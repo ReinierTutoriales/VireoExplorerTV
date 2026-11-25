@@ -1,6 +1,7 @@
 package com.reiniertutoriales.vireoexplorertv
 
 import android.content.ContentResolver
+import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract as D
 import kotlinx.coroutines.Dispatchers
@@ -30,16 +31,47 @@ class Storage(private val resolver: ContentResolver) {
         cursor.use { c ->
             buildList {
                 while (c.moveToNext()) { coroutineContext.ensureActive(); add(Entry(D.buildDocumentUriUsingTree(parent, c.getString(0)), c.getString(1) ?: "Unnamed", c.getString(2) ?: "application/octet-stream", if(c.isNull(3)) -1 else c.getLong(3), c.getInt(4))) }
-            }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            }.sortedWith(defaultEntryComparator)
         }
     }
+    private inline fun <T> queryChildNames(parent: Uri, read: (Cursor, Int) -> T): T {
+        requireGrant(parent)
+        val uri = D.buildChildDocumentsUriUsingTree(parent, D.getDocumentId(parent))
+        val projection = arrayOf(D.Document.COLUMN_DISPLAY_NAME)
+        val cursor = resolver.query(uri, projection, null, null, null) ?: error("Storage unavailable")
+        return cursor.use { read(it, it.getColumnIndexOrThrow(D.Document.COLUMN_DISPLAY_NAME)) }
+    }
+
+    internal suspend fun childNames(parent: Uri): List<String> = withContext(Dispatchers.IO) {
+        queryChildNames(parent) { rows, displayName ->
+            buildList {
+                while (rows.moveToNext()) {
+                    coroutineContext.ensureActive()
+                    rows.getString(displayName)?.let { add(it) }
+                }
+            }
+        }
+    }
+
+    private suspend fun hasChildNamed(parent: Uri, name: String): Boolean = withContext(Dispatchers.IO) {
+        queryChildNames(parent) { rows, displayName ->
+            while (rows.moveToNext()) {
+                coroutineContext.ensureActive()
+                if (rows.getString(displayName)?.equals(name, ignoreCase = true) == true) {
+                    return@queryChildNames true
+                }
+            }
+            false
+        }
+    }
+
     suspend fun createZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
         revalidate(entry)
         val name = entry.name + ".zip"
         require(validName(name))
-        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
+        check(!hasChildNamed(parent, name)) { "Destination exists" }
         val plan = mutableListOf<Pair<Entry, String>>()
         val seen = HashSet<Uri>()
         suspend fun visit(item: Entry, path: String, depth: Int) {
@@ -87,9 +119,10 @@ class Storage(private val resolver: ContentResolver) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
         revalidate(entry)
-        val name = entry.name.dropLast(4).ifBlank { "Extracted" }
+        val rawStem = if (entry.name.endsWith(".zip", ignoreCase = true)) entry.name.dropLast(4) else entry.name
+        val name = rawStem.ifBlank { "Extracted" }
         require(validName(name))
-        check(children(parent).none { it.name.equals(name, true) }) { "Destination exists" }
+        check(!hasChildNamed(parent, name)) { "Destination exists" }
         val root = checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
         val folders = mutableMapOf<List<String>, Uri>(emptyList<String>() to root)
         val paths = HashSet<List<String>>()
@@ -103,7 +136,7 @@ class Storage(private val resolver: ContentResolver) {
                 val key = parts.take(i + 1)
                 current = folders[key] ?: run {
                     check(folders.size < 10000) { "Too many directories" }
-                    check(children(current).none { it.name.equals(parts[i], true) }) { "Archive name conflict" }
+                    check(!hasChildNamed(current, parts[i])) { "Archive name conflict" }
                     checkNotNull(D.createDocument(resolver, current, D.Document.MIME_TYPE_DIR, parts[i])).also { folders[key] = it }
                 }
             }
@@ -116,13 +149,13 @@ class Storage(private val resolver: ContentResolver) {
                     val item = zip.nextEntry ?: break
                     check(++count <= 10000) { "Too many archive entries" }
                     val parts = zipPath(item.name)
-                    check(paths.add(parts)) { "Duplicate archive path" }
+                    check(paths.add(parts.map { it.lowercase(java.util.Locale.ROOT) })) { "Duplicate archive path" }
                     if (item.isDirectory) {
                         folder(parts)
                         check(zip.read() == -1) { "Invalid directory entry" }
                     } else {
                         val target = folder(parts.dropLast(1))
-                        check(children(target).none { it.name.equals(parts.last(), true) }) { "Archive name conflict" }
+                        check(!hasChildNamed(target, parts.last())) { "Archive name conflict" }
                         val file = checkNotNull(D.createDocument(resolver, target, "application/octet-stream", parts.last()))
                         try {
                             checkNotNull(resolver.openOutputStream(file, "w")).use { output ->
@@ -173,33 +206,56 @@ class Storage(private val resolver: ContentResolver) {
         }
         val duplicates = ArrayList<List<Entry>>()
         val buffer = ByteArray(128 * 1024)
+        var sampleBudget = 64L * 1024 * 1024
         var budget = 512L * 1024 * 1024
         for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }) {
             if (group.size < 2) continue
-            val hashes = mutableMapOf<String, MutableList<Entry>>()
-            for (entry in group) {
-                coroutineContext.ensureActive()
-                if (size > budget) { limited = true; continue }
-                try {
-                    val md = MessageDigest.getInstance("SHA-256")
-                    var read = 0L
-                    checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            read += n
-                            budget -= n
-                            check(budget >= 0 && read <= size)
-                            md.update(buffer, 0, n)
+            // Stage 1: progressive 64 KiB prefix sample hash for files larger than 128 KiB using a dedicated sample budget.
+            val candidateGroups = if (size > 128 * 1024L) {
+                val sampleGroups = mutableMapOf<String, MutableList<Entry>>()
+                val sampleSize = 64 * 1024
+                for (entry in group) {
+                    coroutineContext.ensureActive()
+                    if (sampleSize > sampleBudget) { limited = true; continue }
+                    try {
+                        val (prefixHash, sampledBytes) = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                            sampledPrefixSha256(input, sampleSize) { coroutineContext.ensureActive() }
                         }
-                    }
-                    check(read == size)
-                    val hash = android.util.Base64.encodeToString(md.digest(), android.util.Base64.NO_WRAP)
-                    hashes.getOrPut(hash) { mutableListOf() }.add(entry)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                        sampleBudget -= sampledBytes
+                        sampleGroups.getOrPut(prefixHash) { mutableListOf() }.add(entry)
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                }
+                sampleGroups.values.filter { it.size > 1 }
+            } else {
+                listOf(group)
             }
-            duplicates.addAll(hashes.values.filter { it.size > 1 })
+            // Stage 2: full SHA-256 verification only for entries whose size and prefix sample matched.
+            for (candidates in candidateGroups) {
+                val hashes = mutableMapOf<String, MutableList<Entry>>()
+                for (entry in candidates) {
+                    coroutineContext.ensureActive()
+                    if (size > budget) { limited = true; continue }
+                    try {
+                        val md = MessageDigest.getInstance("SHA-256")
+                        var read = 0L
+                        checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                read += n
+                                budget -= n
+                                check(budget >= 0 && read <= size)
+                                md.update(buffer, 0, n)
+                            }
+                        }
+                        check(read == size)
+                        val hash = bytesToHex(md.digest())
+                        hashes.getOrPut(hash) { mutableListOf() }.add(entry)
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                }
+                duplicates.addAll(hashes.values.filter { it.size > 1 })
+            }
         }
         ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures, (files.filter { cleanupReason(it.name) != null } + emptyFolders).distinctBy { it.uri })
     }
@@ -256,7 +312,7 @@ class Storage(private val resolver: ContentResolver) {
         return false
     }
     suspend fun moveDirectory(entry: Entry, sourceParent: Uri, destination: Uri): Uri = withContext(Dispatchers.IO) {
-        require(android.os.Build.VERSION.SDK_INT >= 24 && entry.directory)
+        require(entry.directory)
         requireGrant(entry.uri, true)
         requireGrant(sourceParent, true)
         requireGrant(destination, true)
@@ -268,12 +324,12 @@ class Storage(private val resolver: ContentResolver) {
         check(!descendant) { "Cannot move into a descendant" }
         check(revalidate(entry).flags and D.Document.FLAG_SUPPORTS_MOVE != 0) { "Provider does not support folder move" }
         check(children(sourceParent).any { it.uri == entry.uri }) { "Source folder changed" }
-        check(children(destination).none { it.name.equals(entry.name, ignoreCase = true) }) { "Destination already exists" }
+        check(!hasChildNamed(destination, entry.name)) { "Destination already exists" }
         coroutineContext.ensureActive()
         checkNotNull(D.moveDocument(resolver, entry.uri, sourceParent, destination)) { "Provider move failed" }
     }
     suspend fun copyDirectory(entry: Entry, parent: Uri, destinationName: String = entry.name, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
-        require(entry.directory && validName(entry.name))
+        require(entry.directory && validName(entry.name) && validName(destinationName))
         requireGrant(entry.uri)
         requireGrant(parent, true)
         // Reject same-provider destination aliases and descendants before creating anything.
@@ -295,7 +351,7 @@ class Storage(private val resolver: ContentResolver) {
             items.filter { it.directory }.forEach { queue.add(it to depth + 1) }
             check(queue.size <= 10000 - count) { "Directory copy limit exceeded" }
         }
-        check(children(parent).none { it.name.equals(destinationName, ignoreCase = true) }) { "Destination already exists" }
+        check(!hasChildNamed(parent, destinationName)) { "Destination already exists" }
         val target = create(parent, destinationName)
         val destinations = HashMap<Uri, Uri>()
         destinations[entry.uri] = target
@@ -308,7 +364,7 @@ class Storage(private val resolver: ContentResolver) {
                     coroutineContext.ensureActive()
                     revalidate(item)
                     if (item.directory) {
-                        check(children(destination).none { it.name.equals(item.name, ignoreCase = true) })
+                        check(!hasChildNamed(destination, item.name))
                         destinations[item.uri] = create(destination, item.name)
                     } else {
                         transfer(item, destination, false) { progress(Math.addExact(total, it)) }
@@ -328,7 +384,7 @@ class Storage(private val resolver: ContentResolver) {
         requireGrant(parent, true)
         require(!entry.directory && validName(entry.name) && validName(destinationName))
         if (move) check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
-        check(children(parent).none { it.name.equals(destinationName, ignoreCase = true) }) { "Destination already exists" }
+        check(!hasChildNamed(parent, destinationName)) { "Destination already exists" }
         val target = checkNotNull(D.createDocument(resolver, parent, entry.mime, destinationName))
         var verified = false
         try {
@@ -399,6 +455,35 @@ internal fun cleanupReason(name: String): String? = when (name.substringAfterLas
     "part", "partial", "crdownload" -> "Possible incomplete download"
     "apk" -> "APK installer"
     else -> null
+}
+
+private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+internal fun bytesToHex(bytes: ByteArray): String {
+    val out = CharArray(bytes.size * 2)
+    for (i in bytes.indices) {
+        val v = bytes[i].toInt() and 0xFF
+        out[i * 2] = HEX_CHARS[v ushr 4]
+        out[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+    }
+    return String(out)
+}
+
+internal inline fun sampledPrefixSha256(input: java.io.InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): Pair<String, Int> {
+    require(maxBytes > 0)
+    val md = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(minOf(maxBytes, 16 * 1024))
+    var remaining = maxBytes
+    var totalRead = 0
+    while (remaining > 0) {
+        checkCancellation()
+        val n = input.read(buffer, 0, minOf(buffer.size, remaining))
+        if (n <= 0) break
+        md.update(buffer, 0, n)
+        remaining -= n
+        totalRead += n
+    }
+    return bytesToHex(md.digest()) to totalRead
 }
 
 internal inline fun equalStreams(a: java.io.InputStream, b: java.io.InputStream, expected: Long, checkCancellation: () -> Unit): Boolean {

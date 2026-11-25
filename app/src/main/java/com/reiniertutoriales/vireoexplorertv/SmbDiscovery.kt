@@ -50,7 +50,7 @@ internal suspend fun resolveSmb(context: Context, service: SmbService): String =
         })
     }
 
-@android.annotation.TargetApi(34)
+@androidx.annotation.RequiresApi(34)
 private fun resolveModern(manager: NsdManager, info: NsdServiceInfo, continuation: kotlinx.coroutines.CancellableContinuation<String>) {
     val finished = java.util.concurrent.atomic.AtomicBoolean(false)
     val callback = object : NsdManager.ServiceInfoCallback {

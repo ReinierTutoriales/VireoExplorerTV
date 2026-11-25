@@ -10,9 +10,13 @@
     <string name="explorer_storage">Storage</string>
     <string name="explorer_categories">Categories</string>
     <string name="explorer_internal">Internal</string>
+    <string name="explorer_internal_subtitle">Shared device storage</string>
     <string name="explorer_usb">USB</string>
+    <string name="explorer_usb_subtitle">Removable drives &amp; SD</string>
     <string name="explorer_local_network">Local network</string>
+    <string name="explorer_local_network_subtitle">SMB2/3 shares &amp; streaming</string>
     <string name="explorer_folders">Folders</string>
+    <string name="explorer_folders_subtitle">Authorized &amp; recent paths</string>
     <string name="explorer_videos">Videos</string>
     <string name="explorer_audio">Audio</string>
     <string name="explorer_photos">Photos</string>
