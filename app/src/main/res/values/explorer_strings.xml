@@ -148,4 +148,9 @@
         <item quantity="other">%d folders could not be read.</item>
     </plurals>
     <string name="explorer_apk_settings_unavailable">Unknown app sources settings are unavailable on this TV.</string>
+    <string name="explorer_storage_diagnostics">Storage access diagnostics</string>
+    <string name="explorer_storage_diagnostics_steps">Connect a computer to this TV with Android debugging enabled. Run this command on the computer, then reopen VireoExplorerTV and retry the operation.\n\n%1$s</string>
+    <string name="explorer_storage_copy_command">Copy command</string>
+    <string name="explorer_storage_access_lost">Storage access was revoked or the volume was disconnected.</string>
+    <string name="explorer_storage_read_only">Read-only access</string>
 </resources>

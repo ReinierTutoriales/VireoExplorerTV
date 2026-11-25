@@ -1,5 +1,7 @@
 package com.reiniertutoriales.vireoexplorertv
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -83,8 +85,15 @@ class MainActivity : ComponentActivity() {
         var homeSearch by rememberSaveable { mutableStateOf("") }
         var usbOnly by rememberSaveable { mutableStateOf(false) }
         var folderPickerNotice by remember { mutableStateOf<String?>(null) }
-        var directStorageGranted by remember { mutableStateOf(hasDirectStorageAccess(this@MainActivity)) }
-        var directStorageWritable by remember { mutableStateOf(hasDirectStorageWriteAccess(this@MainActivity)) }
+        fun readDirectStorageState(previous: StorageAccessState = StorageAccessState.NEEDS_CONSENT) =
+            StorageAccessState.fromPermissions(
+                hasDirectStorageAccess(this@MainActivity), hasDirectStorageWriteAccess(this@MainActivity), previous
+            )
+
+        var directAccess by remember { mutableStateOf(readDirectStorageState()) }
+        val directStorageGranted = directAccess.canRead
+        val directStorageWritable = directAccess.canWrite
+        var showStorageDiagnostics by rememberSaveable { mutableStateOf(false) }
         var pendingActionAfterGrant by remember { mutableStateOf<(() -> Unit)?>(null) }
 
         var showHomeSearchDialog by remember { mutableStateOf(false) }
@@ -98,11 +107,10 @@ class MainActivity : ComponentActivity() {
         var apkAwaitingSettings by remember { mutableStateOf<Entry?>(null) }
 
         fun finishDirectStorageRequest() {
-            directStorageGranted = hasDirectStorageAccess(this@MainActivity)
-            directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
+            directAccess = readDirectStorageState(directAccess)
             val action = pendingActionAfterGrant
             pendingActionAfterGrant = null
-            if (directStorageGranted) {
+            if (directAccess.canRead) {
                 folderPickerNotice = null
                 action?.invoke()
             }
@@ -116,9 +124,8 @@ class MainActivity : ComponentActivity() {
         ) { finishDirectStorageRequest() }
 
         fun requestDirectStoragePermission(onGranted: (() -> Unit)? = null) {
-            if (hasDirectStorageAccess(this@MainActivity)) {
-                directStorageGranted = true
-                directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
+            directAccess = readDirectStorageState(directAccess)
+            if (directAccess.canRead) {
                 onGranted?.invoke()
                 return
             }
@@ -128,17 +135,16 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= 30) {
                 try {
                     storageSettingsLauncher.launch(
-                        Intent(
-                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        )
+                        Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
                     )
                 } catch (_: RuntimeException) {
                     try {
                         storageSettingsLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
                     } catch (_: RuntimeException) {
                         pendingActionAfterGrant = null
+                        directAccess = StorageAccessState.UNAVAILABLE
                         folderPickerNotice = getString(R.string.explorer_storage_settings_unavailable)
+                        showStorageDiagnostics = true
                     }
                 }
             } else {
@@ -151,14 +157,15 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        var writableRoots by remember {
-            mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet())
+        fun readFolderGrants() = contentResolver.persistedUriPermissions.associate {
+            it.uri to StorageAccessState.fromPermissions(it.isReadPermission, it.isWritePermission)
         }
 
+        var folderGrants by remember { mutableStateOf(readFolderGrants()) }
+
         fun refreshFolderGrants() {
-            val grants = contentResolver.persistedUriPermissions
-            model.roots = grants.filter { it.isReadPermission }.map { it.uri }
-            writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
+            folderGrants = readFolderGrants()
+            model.roots = folderGrants.filterValues { it.canRead }.keys.toList()
         }
 
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -185,13 +192,12 @@ class MainActivity : ComponentActivity() {
         }
 
         LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-            directStorageGranted = hasDirectStorageAccess(this@MainActivity)
-            directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
+            directAccess = readDirectStorageState(directAccess)
             refreshFolderGrants()
             if (model.path.isNotEmpty()) {
                 val rootUri = model.path.first().first
                 val valid = if (rootUri.scheme == "file") {
-                    directStorageGranted && File(rootUri.path.orEmpty()).exists()
+                    directAccess.canRead && File(rootUri.path.orEmpty()).exists()
                 } else {
                     model.roots.any { storage.root(it) == rootUri }
                 }
@@ -200,7 +206,7 @@ class MainActivity : ComponentActivity() {
                     model.selected = null
                     model.viewing = null
                     model.scanOpen = false
-                    model.error = "Storage access revoked"
+                    model.error = getString(R.string.explorer_storage_access_lost)
                 }
             }
         }
@@ -307,11 +313,13 @@ class MainActivity : ComponentActivity() {
         }
 
         val rootUriInPath = model.path.firstOrNull()?.first
-        val writeGrant = when {
-            rootUriInPath == null -> false
-            rootUriInPath.scheme == "file" -> directStorageWritable
-            else -> writableRoots.any { storage.root(it) == rootUriInPath }
+        val folderAccess = when {
+            rootUriInPath == null -> StorageAccessState.NEEDS_CONSENT
+            rootUriInPath.scheme == "file" -> directAccess
+            else -> folderGrants.entries.firstOrNull { storage.root(it.key) == rootUriInPath }?.value
+                ?: StorageAccessState.REVOKED
         }
+        val writeGrant = folderAccess.canWrite
         val canCreateChildren by produceState(false, parent, writeGrant, model.revision) {
             value = false
             value = parent != null && writeGrant && storage.canCreateChildren(parent)
@@ -335,7 +343,7 @@ class MainActivity : ComponentActivity() {
             val canAnalyze = if (isFileCleanup) directStorageGranted else selectedCleanupRoot in model.roots
             if (canAnalyze) {
                 val targetUri = if (isFileCleanup) selectedCleanupRoot else storage.root(selectedCleanupRoot)
-                val canWriteCleanup = if (isFileCleanup) directStorageWritable else selectedCleanupRoot in writableRoots
+                val canWriteCleanup = if (isFileCleanup) directStorageWritable else folderGrants[selectedCleanupRoot]?.canWrite == true
                 StorageAnalysis(storage, targetUri, canWriteCleanup, onClose = { cleanupRoot = null })
                 return
             }
@@ -463,6 +471,21 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onDismiss = { showHomeSearchDialog = false }
+            )
+        }
+
+        if (showStorageDiagnostics) {
+            val command = "adb shell appops set --uid $packageName MANAGE_EXTERNAL_STORAGE allow"
+            val label = stringResource(R.string.explorer_storage_diagnostics)
+            TvConfirmDialog(
+                title = label,
+                message = stringResource(R.string.explorer_storage_diagnostics_steps, command),
+                confirmLabel = stringResource(R.string.explorer_storage_copy_command),
+                cancelLabel = stringResource(R.string.explorer_back),
+                onConfirm = {
+                    getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(label, command))
+                },
+                onDismiss = { showStorageDiagnostics = false }
             )
         }
 
@@ -1251,6 +1274,9 @@ class MainActivity : ComponentActivity() {
 
                 if (openingExternalFile) Text(stringResource(R.string.explorer_exporting))
                 model.error?.let { Text(it, color = colors.error) }
+                if (folderAccess == StorageAccessState.READ_ONLY) {
+                    Text(stringResource(R.string.explorer_storage_read_only), color = colors.onSurfaceVariant)
+                }
                 if (model.busy) Text(stringResource(R.string.explorer_reading_storage), color = colors.onSurfaceVariant)
                 if (model.mutating) Text(stringResource(R.string.explorer_working), color = colors.primary)
 

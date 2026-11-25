@@ -15,9 +15,11 @@ Package visibility queries are scoped to TV and regular launchers. Android contr
 
 ## Folder grants and direct access
 
+The explorer derives access from Android grants and reports needs consent, granted, read only, unavailable settings, and revoked access. It refreshes the state when returning to the app.
+
 - **Add folder** opens Android's Storage Access Framework directory selector. Persist only the granted read and write flags. Recheck them on resume and before mutations. A provider's flags determine whether a folder supports creation or an entry supports rename, moving, or deletion.
 - Canceling the selector returns to the explorer. Some TV firmwares supply a picker stub that reports cancellation, while others lack a handler. The app reports both outcomes and shows an explicit action for direct access on the Files page.
-- **Allow access** opens app-specific all-files settings, with the global settings screen as fallback. If neither exists, use an authorized folder or browse SMB. On Android 11 and newer, the picker cannot grant the primary shared-storage root, the `Download` directory or restricted app directories. A folder search keeps the original tree root in its path so valid grants survive resume and process recreation.
+- **Allow access** opens app-specific all-files settings, with the global settings screen as fallback. If both screens fail to open, a diagnostics dialog shows the optional ADB test command with a copy action. Authorized folders and SMB remain available. On Android 11 and newer, the picker cannot grant the primary shared-storage root, the `Download` directory or restricted app directories. A folder search keeps the original tree root in its path so valid grants survive resume and process recreation.
 - Installing a local APK or opening a local document in another app uses a temporary read-only content URI. Direct-path files are staged in a dedicated private cache subdirectory with a total 1 GiB budget. Expired copies are purged on the next export and failed preparations are removed. Files already backed by SAF retain their original content URI.
 
 The following ADB command is for independent testing on an isolated Android TV emulator or an authorized test device.

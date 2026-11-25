@@ -161,7 +161,7 @@ internal fun FolderEntry(
                 focusedBorder = focusBorder,
                 focusedSelectedBorder = focusBorder
             ),
-            scale = ListItemDefaults.scale(focusedScale = 1.025f, focusedSelectedScale = 1.025f)
+            scale = ListItemDefaults.scale(focusedScale = 1.05f, focusedSelectedScale = 1.05f)
         )
     }
 }

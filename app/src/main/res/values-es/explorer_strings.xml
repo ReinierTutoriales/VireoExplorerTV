@@ -150,4 +150,9 @@
         <item quantity="other">No se pudieron leer %d carpetas.</item>
     </plurals>
     <string name="explorer_apk_settings_unavailable">Los ajustes para instalar aplicaciones desconocidas no están disponibles en este TV.</string>
+    <string name="explorer_storage_diagnostics">Diagnóstico de acceso al almacenamiento</string>
+    <string name="explorer_storage_diagnostics_steps">Conecta una computadora a este TV con la depuración de Android activada. Ejecuta este comando en la computadora, abre VireoExplorerTV de nuevo y repite la operación.\n\n%1$s</string>
+    <string name="explorer_storage_copy_command">Copiar comando</string>
+    <string name="explorer_storage_access_lost">El acceso se revocó o se desconectó la unidad.</string>
+    <string name="explorer_storage_read_only">Acceso de solo lectura</string>
 </resources>
