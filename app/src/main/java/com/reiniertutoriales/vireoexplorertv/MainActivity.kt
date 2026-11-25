@@ -156,6 +156,34 @@ class MainActivity : ComponentActivity() {
         }
 
         fun refreshFolderGrants() {
+            val grants = contentResolver.persistedUriPermissions
+            model.roots = grants.filter { it.isReadPermission }.map { it.uri }
+            writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
+        }
+
+        val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode != android.app.Activity.RESULT_OK) {
+                folderPickerNotice = getString(R.string.explorer_picker_closed)
+                return@rememberLauncherForActivityResult
+            }
+            try {
+                val data = checkNotNull(result.data)
+                val uri = checkNotNull(data.data)
+                val granted = data.flags and
+                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                check(granted and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+                contentResolver.takePersistableUriPermission(uri, granted)
+                refreshFolderGrants()
+                folderPickerNotice = null
+                model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri))
+            } catch (_: RuntimeException) {
+                folderPickerNotice = getString(R.string.explorer_folder_grant_failed)
+            }
+        }
+
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+            directStorageGranted = hasDirectStorageAccess(this@MainActivity)
+            directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
             refreshFolderGrants()
             if (model.path.isNotEmpty()) {
                 val rootUri = model.path.first().first
