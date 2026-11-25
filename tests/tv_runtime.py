@@ -48,8 +48,21 @@ class Tv:
         return int(match[1]) if match else None
 
     def tree(self):
-        self.adb("shell", "uiautomator", "dump", DB_XML)
-        return ET.fromstring(self.adb("shell", "cat", DB_XML))
+        # Legacy UIAutomator may fail without replacing its previous XML dump.
+        # Never use a stale hierarchy to dispatch a destructive or navigation action.
+        last = ""
+        for _ in range(4):
+            self.adb("shell", "rm", "-f", DB_XML)
+            last = self.adb("shell", "uiautomator", "dump", DB_XML)
+            if "dumped to" in last.lower():
+                try:
+                    root = ET.fromstring(self.adb("shell", "cat", DB_XML))
+                    if next(root.iter("node"), None) is not None:
+                        return root
+                except (subprocess.SubprocessError, ET.ParseError):
+                    pass
+            time.sleep(0.4)
+        raise AssertionError(f"UIAutomator did not produce a fresh hierarchy: {last}")
 
     def find(self, predicate, label, focused=False):
         for _ in range(5):
