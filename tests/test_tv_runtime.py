@@ -13,16 +13,19 @@ class SetupTests(unittest.TestCase):
             tv.wait_ready()
         self.assertEqual(command.call_count, 9)
 
-    def test_transient_install_timeout_retries_once(self):
+    def test_install_success(self):
         tv = Tv("emulator-5554")
-        with patch.object(tv, "wait_ready") as ready, patch.object(
-                tv, "setup_command", side_effect=[subprocess.TimeoutExpired("adb", 90), "Success\n"]) as command:
-            with patch("tv_runtime.subprocess.run") as reset:
+        with patch.object(tv, "wait_ready"), patch.object(tv, "setup_command", return_value="Success\n") as command:
+            tv.install("fixture.apk")
+        command.assert_called_once_with("install", "--no-streaming", "-r", "fixture.apk", timeout=90)
+
+    def test_install_timeout_propagates_without_replay(self):
+        tv = Tv("emulator-5554")
+        with patch.object(tv, "wait_ready"), patch.object(
+                tv, "setup_command", side_effect=subprocess.TimeoutExpired("adb", 90)) as command:
+            with self.assertRaises(subprocess.TimeoutExpired):
                 tv.install("fixture.apk")
-        self.assertEqual(ready.call_count, 2)
-        self.assertEqual(command.call_count, 2)
-        self.assertEqual(reset.call_count, 2)
-        command.assert_called_with("install", "--no-streaming", "-r", "fixture.apk", timeout=90)
+        command.assert_called_once()
 
     def test_deterministic_install_error_not_retried(self):
         tv = Tv("emulator-5554")
@@ -30,16 +33,7 @@ class SetupTests(unittest.TestCase):
         with patch.object(tv, "wait_ready"), patch.object(tv, "setup_command", side_effect=error) as command:
             with self.assertRaises(subprocess.CalledProcessError):
                 tv.install("fixture.apk")
-        self.assertEqual(command.call_count, 1)
-
-    def test_second_timeout_propagates(self):
-        tv = Tv("emulator-5554")
-        with patch.object(tv, "wait_ready"), patch.object(
-                tv, "setup_command", side_effect=subprocess.TimeoutExpired("adb", 90)) as command:
-            with patch("tv_runtime.subprocess.run"):
-                with self.assertRaises(subprocess.TimeoutExpired):
-                    tv.install("fixture.apk")
-        self.assertEqual(command.call_count, 2)
+        command.assert_called_once()
 
     def test_runtime_configuration_after_readiness(self):
         tv = Tv("emulator-5554")

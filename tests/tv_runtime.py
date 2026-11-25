@@ -30,7 +30,7 @@ class Tv:
             ["adb", "-s", self.serial, *args], text=True,
             stderr=subprocess.STDOUT, timeout=timeout)
 
-    def wait_ready(self, timeout=120):
+    def wait_ready(self, timeout=240):
         deadline = time.monotonic() + timeout
         consecutive = 0
         last = "not ready"
@@ -61,26 +61,10 @@ class Tv:
         print("Runtime animation settings verified", flush=True)
 
     def install(self, apk):
-        # Reinstalling the same fixture on an isolated emulator is safe.
-        # Never retry a deterministic package/signature/install error.
-        for attempt in range(2):
-            self.wait_ready()
-            try:
-                result = self.setup_command("install", "--no-streaming", "-r", apk, timeout=90)
-                if "Success" not in result.splitlines():
-                    raise AssertionError(f"APK installation failed: {result}")
-                return
-            except subprocess.TimeoutExpired:
-                if attempt:
-                    raise
-            except subprocess.CalledProcessError as error:
-                output = (error.output or "").lower()
-                if attempt or not any(reason in output for reason in
-                                      ("device offline", "device not found", "transport error", "connection reset", "closed")):
-                    raise
-            print(f"Transient ADB install failure for {apk}; resetting the isolated ADB server once", flush=True)
-            subprocess.run(["adb", "kill-server"], check=True, timeout=15, capture_output=True)
-            subprocess.run(["adb", "start-server"], check=True, timeout=15, capture_output=True)
+        self.wait_ready()
+        result = self.setup_command("install", "--no-streaming", "-r", apk, timeout=90)
+        if "Success" not in result.splitlines():
+            raise AssertionError(f"APK installation failed: {result}")
 
     def screenshot(self, path):
         data = subprocess.check_output(["adb", "-s", self.serial, "exec-out", "screencap", "-p"], timeout=60)
