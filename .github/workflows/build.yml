@@ -42,6 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [28, 30, 36]
     env:
       VIREO_TEST_SMB_PASSWORD: VireoCIOnly42
     steps:
@@ -84,7 +88,7 @@ jobs:
       - name: Run Android TV storage and SMB checks
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: 36
+          api-level: ${{ matrix.api }}
           target: android-tv
           arch: x86_64
           profile: tv_1080p
@@ -95,5 +99,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: VireoExplorerTV-runtime-evidence
+          name: VireoExplorerTV-runtime-evidence-api-${{ matrix.api }}
           path: runtime-evidence
