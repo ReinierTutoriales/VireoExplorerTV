@@ -22,3 +22,6 @@ Apply AGENTS.md and docs/EXECUTION.md as the canonical project contracts.
 - Correct all verified in-scope failures and adjacent manifestations of their root causes. Re-run affected checks and regressions. Never weaken checks to obtain green CI.
 - Report actual commit, verified results, remaining failures and unavailable evidence. A plan, successful compilation or newly added test is not proof that a product defect was corrected.
 - If blocked, continue independent safe work; disclose the exact blocker and unverified scope. Do not promise asynchronous work or repeat an unchanged status as progress.
+
+## Whole-slice upstream comparison
+Apply AGENTS.md modernization gate before edits: audit every affected component and consumer, resolve supported replacements, delete superseded paths and validate the complete flow. No isolated cosmetic patches presented as comprehensive modernization.

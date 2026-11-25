@@ -27,3 +27,6 @@ Apply AGENTS.md and docs/EXECUTION.md as canonical project contracts. Use docs/I
 - Measure startup, frames, memory and throughput before asserting performance gains. Distinguish instrumented measurements from automation overhead.
 - Follow docs/APP_MANAGEMENT.md and docs/PERMISSIONS.md for destructive operations and authorization; verify preservation, actual effects and error reporting. Use docs/PLAYER.md and docs/IMAGE_VIEWER.md for multimedia acceptance.
 - Report exact SHA, run IDs, checks passed/failed, coverage limits and unresolved blockers. Do not promise future verification without an actual scheduled mechanism.
+
+## Visual and dependency acceptance
+Apply AGENTS.md modernization gate. For UI changes capture and inspect real screenshots, verify remote navigation and actions, and distinguish visual evidence from functional/CI results. For dependency changes inspect resolved debug/release graphs and consumers; check minified release behavior. Record unexecuted checks and investigate exact-SHA push runs via REST.

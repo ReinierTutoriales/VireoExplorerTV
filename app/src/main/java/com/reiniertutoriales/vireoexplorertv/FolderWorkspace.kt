@@ -21,39 +21,50 @@ internal fun FolderWorkspace(
     content: @Composable () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    Row(
-        Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        Column(Modifier.width(152.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("VireoExplorerTV", color = colors.primary, style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 20.dp))
-            ExplorerPage.entries.forEach { page ->
-                DenseListItem(
-                    selected = page == ExplorerPage.FILES,
-                    enabled = enabled,
-                    onClick = { onNavigate(page) },
-                    leadingContent = { ExplorerIcon(page.icon) },
-                    headlineContent = {
-                        Text(stringResource(page.label), maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
-                    },
-                    colors = ListItemDefaults.colors(
-                        selectedContainerColor = colors.primaryContainer,
-                        selectedContentColor = colors.onPrimaryContainer
-                    ),
-                    shape = ListItemDefaults.shape(VireoPillShape),
-                    scale = ListItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
-                )
+    var showDetails by remember { mutableStateOf(false) }
+    NavigationDrawer(
+        drawerState = rememberDrawerState(DrawerValue.Closed),
+        drawerContent = {
+            Column(
+                Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 12.dp, top = 24.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ExplorerPage.entries.forEach { page ->
+                    NavigationDrawerItem(
+                        selected = page == ExplorerPage.FILES,
+                        enabled = enabled,
+                        onClick = { onNavigate(page) },
+                        leadingContent = { ExplorerIcon(page.icon) },
+                        scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
+                    ) { Text(stringResource(page.label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
             }
         }
-        Box(Modifier.weight(1f).fillMaxHeight()) { content() }
-        Surface(
-            modifier = Modifier.width(240.dp).fillMaxHeight(),
-            shape = VireoCardShape,
-            colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface)
-        ) { details() }
+    ) {
+        Row(
+            Modifier.fillMaxSize().padding(start = 20.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+            if (showDetails) {
+                Surface(
+                    modifier = Modifier.width(224.dp).fillMaxHeight(),
+                    shape = VireoCardShape,
+                    colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface)
+                ) {
+                    Column {
+                        OutlinedButton(onClick = { showDetails = false }, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(android.R.string.cancel))
+                        }
+                        Box(Modifier.weight(1f)) { details() }
+                    }
+                }
+            } else {
+                IconButton(enabled = enabled, onClick = { showDetails = true }) {
+                    ExplorerIcon(R.drawable.symbol_description, description = stringResource(R.string.explorer_folder_tools))
+                }
+            }
+        }
     }
 }
 

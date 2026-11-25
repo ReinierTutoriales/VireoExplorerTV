@@ -33,8 +33,8 @@ internal fun FolderEntry(
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    val shape = VireoCardShape
-    val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = shape)
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    val restingBorder = Border.None
     val selectedRestingBorder = Border(BorderStroke(1.dp, colors.primary), shape = shape)
     val focusBorder = Border(BorderStroke(3.dp, colors.primary), shape = shape)
     val size = if (!entry.directory && entry.size >= 0) {
@@ -49,10 +49,10 @@ internal fun FolderEntry(
             enabled = enabled,
             onClick = onClick,
             onLongClick = onLongClick,
-            modifier = modifier.heightIn(min = 124.dp),
+            modifier = modifier.heightIn(min = 112.dp),
             shape = SelectableSurfaceDefaults.shape(shape),
             colors = SelectableSurfaceDefaults.colors(
-                containerColor = colors.surface,
+                containerColor = if (entry.directory) colors.background else colors.surface,
                 contentColor = colors.onSurface,
                 selectedContainerColor = colors.primaryContainer,
                 selectedContentColor = colors.onPrimaryContainer,
@@ -71,11 +71,12 @@ internal fun FolderEntry(
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Box(
-                    Modifier.fillMaxWidth().aspectRatio(16f / 10f).background(colors.surfaceVariant),
+                    Modifier.fillMaxWidth().height(if (entry.directory) 74.dp else 88.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     if (entry.directory) {
-                        ExplorerIcon(R.drawable.symbol_folder, Modifier.size(64.dp))
+                        Icon(androidx.compose.ui.res.painterResource(R.drawable.symbol_folder), contentDescription = null,
+                            modifier = Modifier.size(64.dp), tint = colors.primary)
                     } else {
                         FileThumbnail(entry, revision, Modifier.fillMaxSize())
                     }
@@ -89,7 +90,7 @@ internal fun FolderEntry(
                         }
                     }
                 }
-                Column(Modifier.fillMaxWidth().padding(12.dp),
+                Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall)
@@ -115,7 +116,7 @@ internal fun FolderEntry(
             },
             supportingContent = {
                 Text(
-                    subtitle,
+                    typeLabel,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
@@ -125,11 +126,12 @@ internal fun FolderEntry(
             leadingContent = {
                 Box(
                     Modifier
-                        .size(44.dp)
-                        .background(colors.surfaceVariant, VireoPillShape),
+                        .size(44.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    FileThumbnail(entry, revision)
+                    if (entry.directory) Icon(androidx.compose.ui.res.painterResource(R.drawable.symbol_folder), null,
+                        modifier = Modifier.size(36.dp), tint = colors.primary)
+                    else FileThumbnail(entry, revision)
                 }
             },
             shape = ListItemDefaults.shape(VireoCardShape),

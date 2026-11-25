@@ -25,3 +25,6 @@ Before writing or refactoring any feature, inspect the existing consumers and lo
 - Deliver coherent vertical slices in the fewest safe passes: inspect, select official implementation, integrate, remove superseded code, test and verify actual CI. No repetitive micro-commits or documentation-only substitutes for requested implementation. Check every edited call site and API boundary before committing. Do not use blind text substitutions.
 - Custom code requires a concrete unsupported requirement and focused regression tests. Prefer official samples as references, not wholesale imports; preserve licenses. No invented APIs, unverified version claims, unnecessary dependencies or performance claims without measurements.
 - Report actual evidence and blockers, not planned work as completed. Never bypass lint or weaken permissions to make CI green.
+
+## Current official upstream gate
+Apply AGENTS.md continuous modernization gate. Verify live official release metadata, migration guidance, supported TV design patterns and licensing; inspect direct/transitive debug/release dependencies and actual consumers. Remove superseded paths after migration, not solely because of age.
