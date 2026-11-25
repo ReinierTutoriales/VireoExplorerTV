@@ -1,6 +1,5 @@
 package com.reiniertutoriales.vireoexplorertv
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -122,7 +121,6 @@ internal fun TvConfirmDialog(
                 containerColor = colors.surface,
                 contentColor = colors.onSurface
             ),
-            border = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
         ) {
             Column(
                 modifier = Modifier.widthIn(min = 380.dp, max = 520.dp).padding(24.dp),
@@ -177,7 +175,6 @@ internal fun TvInputDialog(
                 containerColor = colors.surface,
                 contentColor = colors.onSurface
             ),
-            border = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
         ) {
             Column(
                 modifier = Modifier.widthIn(min = 380.dp, max = 520.dp).padding(24.dp),
