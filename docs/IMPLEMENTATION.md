@@ -164,3 +164,30 @@ Folder filtering and sorting run on the default coroutine dispatcher inside `Exp
 Copy, move, and ZIP conflict checks query display names only (`COLUMN_DISPLAY_NAME`), ignoring `null` provider display names instead of fabricating `"Unnamed"` collisions, and `extractZip` enforces case-insensitive archive path uniqueness in memory. Batch `paste` builds an in-memory lowercase `HashSet` once per destination (`resolveConflictInSet`) while retaining authoritative `hasChildNamed` checks immediately before writes. SMB and SAF `Storage.children()` share deterministic case-insensitive sorting with exact-name tie-breaking.
 
 References: [Android coroutine dispatchers](https://developer.android.com/kotlin/coroutines/coroutines-adv#main-safety), [Compose TV focus](https://developer.android.com/develop/ui/compose/touch-input/focus), [UI layer state production](https://developer.android.com/topic/architecture/ui-layer/state-production), and [ContentResolver projections](https://developer.android.com/reference/android/content/ContentResolver). No dependencies or permissions were changed. No frame timing, provider latency, or runtime playback measurements are recorded.
+
+
+## Direct filesystem access (`MANAGE_EXTERNAL_STORAGE`), AMOLED TV file explorer & cleaner overhaul, and 3.8 MB release APK (2026-11-24)
+
+- Physical Android TV ADB audit (`192.168.1.197:5555`, `onn 4K Streaming Device`, Android 14 / API 34): verified that `Intent.ACTION_OPEN_DOCUMENT_TREE` resolves to `com.android.tv.frameworkpackagestubs/.Stubs$DocumentsStub` (which exits immediately with `RESULT_CANCELED`), whereas `Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` resolves to `com.android.tv.settings/.device.apps.specialaccess.AllFilesAccessActivity`. Also verified that the CI debug APK (`app-debug.apk`) weighed 19.4 MB with a 6003 ms cold start, whereas the R8-minified release APK (`app-release.apk`) weighs 3.86 MB with a 1342 ms cold start on the same physical TV.
+- Direct filesystem & USB storage backend (`AndroidManifest.xml`, `Volumes.kt`, `Storage.kt`, `FileThumbnail.kt`, `ImageViewer.kt`, `ExplorerModel.kt`, `MainActivity.kt`): declared `MANAGE_EXTERNAL_STORAGE` (API 30+) and `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE` (`maxSdkVersion="29"`), implemented full `file://` URI support across `Storage` (`children`, `childNames`, `hasChildNamed`, `queryCategoryOrSearch`, `create`, `rename`, `delete`, `transfer`, `copyDirectory`, `moveDirectory`, `createZip`, `extractZip`, `scan`, `availableBytes`), `ThumbnailUtils.createVideoThumbnail` / `createImageThumbnail` for `file://` thumbnails on API 29+, `ImageDecoder.createSource(File)` for `file://` images, and direct `Environment.getExternalStorageDirectory()` / `StorageVolume.getDirectory()` navigation for Internal storage, USB volumes, Categories, and Search.
+- Google TV Design Kit AMOLED File View & Cleaner overhaul (`FolderEntry.kt`, `MainActivity.kt`, `AppManager.kt`, `StorageAnalysis.kt`, `ExplorerHome.kt`):
+  - Replaced the hidden "Folder tools" toggle with a persistent, horizontally scrollable pill chip bar (`ExplorerOption`) for Sort, Grid/List view, New Folder, Multi-select, Favorite, Analyze, and Refresh.
+  - Upgraded `FolderEntry` rows to two-line `ListItem` cards with 44.dp circular icon/thumbnail containers, file extension/folder subtitles, and `#80DCC0` mint size badges.
+  - Fixed `NavigationDrawer` D-pad focus entry (`focusProperties { onEnter }`) so pressing Left from the Home screen always enters at `Inicio` (index 0) instead of jumping to `Favoritos`.
+  - Redesigned `AppManager` ("Limpiador y espacio") and `StorageAnalysis` ("Analizador de almacenamiento") with an internal storage usage card + `VireoProgressBar`, direct one-click internal storage scanning, own app cache cleanup, pill filter tabs (`Limpieza`, `Más pesados`, `Duplicados`), and structured TV Material `ListItem` rows.
+- Release packaging (`.github/workflows/build.yml`, `app/build.gradle.kts`): configured R8-minified `release` build signing with the standard debug key for direct sideloading and added `VireoExplorerTV-release` artifact upload in CI.
+
+
+## Follow-up review of direct storage and listing concurrency
+
+Reviewed from a9fc7c2. Returning to an already-computed listing or the default ordering now cancels and invalidates pending asynchronous work. Failed folder reads also invalidate the pending listing.
+
+Direct file moves revalidate the source before attempting a filesystem rename and check cancellation before mutation. Direct folder moves verify the source parent and current move capability. If rename fails, the operation reports an error and preserves the source. The former copy-then-recursive-delete fallback could remove files added or modified during the copy. Cross-filesystem folder moves require verified source snapshots before automatic deletion can be supported.
+
+Saved local folders now match the internal-storage root using a complete directory boundary. Direct-path APK installation and handoff to external viewers remain incomplete and need content URIs with scoped grants. No runtime or performance acceptance is claimed by this source review.
+
+## Responsiveness follow-up
+
+The app inventory no longer waits for cache traversal and the quick temporary-file scan before loading. Both operations retain lifecycle cancellation and storage-scan exceptions produce a visible error. Local directory writability is queried on an IO dispatcher instead of during composition. Recursive category searches request unsorted children and sort only the final result, avoiding a sort for every visited directory. Starting another search clears the previous results and read failures produce an error.
+
+These changes remove identified work from the UI and inventory-loading paths. Runtime navigation, scan latency and frame timing still need validation on Android TV. They are not evidence that all tools or the visual design are accepted.

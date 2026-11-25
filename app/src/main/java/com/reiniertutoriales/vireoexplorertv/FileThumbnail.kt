@@ -1,6 +1,7 @@
 package com.reiniertutoriales.vireoexplorertv
 
 import android.graphics.Bitmap
+import android.media.ThumbnailUtils
 import android.os.Build
 import android.os.CancellationSignal
 import android.provider.DocumentsContract
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 private val thumbnailDispatcher = Dispatchers.IO.limitedParallelism(4)
@@ -57,8 +59,20 @@ internal fun FileThumbnail(entry: Entry, revision: Int) {
             scope.launch {
                 try {
                     val image = withContext(thumbnailDispatcher) {
-                        thumbnailCache.get(key) ?: resolver.loadThumbnail(entry.uri, Size(160, 96), signal).also {
-                            thumbnailCache.put(key, it)
+                        thumbnailCache.get(key) ?: run {
+                            val size = Size(160, 96)
+                            val loaded = if (entry.uri.scheme == "file") {
+                                val file = File(requireNotNull(entry.uri.path))
+                                val mime = mediaMime(entry.name, entry.mime)
+                                if (mime.startsWith("video/")) {
+                                    ThumbnailUtils.createVideoThumbnail(file, size, signal)
+                                } else {
+                                    ThumbnailUtils.createImageThumbnail(file, size, signal)
+                                }
+                            } else {
+                                resolver.loadThumbnail(entry.uri, size, signal)
+                            }
+                            loaded.also { thumbnailCache.put(key, it) }
                         }
                     }
                     bitmap = image
@@ -82,7 +96,7 @@ internal fun FileThumbnail(entry: Entry, revision: Int) {
 }
 
 @Composable
-private fun FileTypeIcon(entry: Entry) {
+internal fun FileTypeIcon(entry: Entry) {
     val icon = if (entry.directory) R.drawable.symbol_folder
     else FileCategory.entries.firstOrNull { it.matches(entry) }?.icon ?: R.drawable.symbol_description
     ExplorerIcon(icon)

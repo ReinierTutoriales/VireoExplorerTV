@@ -3,37 +3,152 @@ package com.reiniertutoriales.vireoexplorertv
 import android.content.ContentResolver
 import android.database.Cursor
 import android.net.Uri
+import android.os.StatFs
 import android.provider.DocumentsContract as D
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.security.MessageDigest
+import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 data class Entry(val uri: Uri, val name: String, val mime: String, val size: Long, val flags: Int) {
     val directory get() = mime == D.Document.MIME_TYPE_DIR
 }
+
 class Storage(private val resolver: ContentResolver) {
+    internal fun isFileUri(uri: Uri): Boolean = uri.scheme == "file"
+
+    internal fun toFile(uri: Uri): File = File(requireNotNull(uri.path) { "Missing file path" })
+
+    private fun fileFlags(file: File): Int {
+        var flags = 0
+        val parentWritable = file.parentFile?.canWrite() == true
+        if (file.isDirectory) {
+            if (file.canWrite()) flags = flags or D.Document.FLAG_DIR_SUPPORTS_CREATE
+            if (parentWritable) {
+                flags = flags or D.Document.FLAG_SUPPORTS_RENAME or
+                    D.Document.FLAG_SUPPORTS_DELETE or
+                    D.Document.FLAG_SUPPORTS_MOVE
+            }
+        } else {
+            val mime = inferFileMime(file.name)
+            if (mime.startsWith("image/") || mime.startsWith("video/")) {
+                flags = flags or D.Document.FLAG_SUPPORTS_THUMBNAIL
+            }
+            if (parentWritable) {
+                flags = flags or D.Document.FLAG_SUPPORTS_RENAME or
+                    D.Document.FLAG_SUPPORTS_DELETE or
+                    D.Document.FLAG_SUPPORTS_MOVE
+            }
+            if (file.canWrite()) {
+                flags = flags or D.Document.FLAG_SUPPORTS_WRITE
+            }
+        }
+        return flags
+    }
+
+    internal fun entryFromFile(file: File): Entry {
+        val isDir = file.isDirectory
+        val mime = if (isDir) D.Document.MIME_TYPE_DIR else inferFileMime(file.name)
+        val size = if (isDir) -1L else file.length()
+        return Entry(Uri.fromFile(file), file.name.ifEmpty { file.path }, mime, size, fileFlags(file))
+    }
+
     private fun requireGrant(uri: Uri, write: Boolean = false) {
+        if (isFileUri(uri)) {
+            val f = toFile(uri)
+            check(f.exists()) { "Storage path unavailable" }
+            if (write) check(f.canWrite() || f.parentFile?.canWrite() == true) { "Storage write permission unavailable" }
+            else check(f.canRead()) { "Storage read permission unavailable" }
+            return
+        }
         val treeId = D.getTreeDocumentId(uri)
         check(resolver.persistedUriPermissions.any {
             it.uri.authority == uri.authority && D.getTreeDocumentId(it.uri) == treeId &&
                 it.isReadPermission && (!write || it.isWritePermission)
         }) { "Storage permission unavailable" }
     }
-    fun root(tree: Uri): Uri = D.buildDocumentUriUsingTree(tree, D.getTreeDocumentId(tree))
-    suspend fun children(parent: Uri): List<Entry> = withContext(Dispatchers.IO) {
+
+    fun root(tree: Uri): Uri = if (isFileUri(tree)) tree else D.buildDocumentUriUsingTree(tree, D.getTreeDocumentId(tree))
+
+    internal fun openInput(uri: Uri): InputStream =
+        if (isFileUri(uri)) FileInputStream(toFile(uri))
+        else checkNotNull(resolver.openInputStream(uri)) { "Cannot open input stream" }
+
+    private fun openOutput(uri: Uri): OutputStream =
+        if (isFileUri(uri)) FileOutputStream(toFile(uri), false)
+        else checkNotNull(resolver.openOutputStream(uri, "w")) { "Cannot open output stream" }
+
+    private fun createChildDocument(parent: Uri, mime: String, name: String): Uri {
+        require(validName(name))
+        if (isFileUri(parent)) {
+            val dir = toFile(parent)
+            check(dir.isDirectory && dir.canWrite()) { "Parent directory is not writable" }
+            val target = File(dir, name)
+            check(!target.exists()) { "Destination already exists" }
+            if (mime == D.Document.MIME_TYPE_DIR) {
+                check(target.mkdir()) { "Could not create folder" }
+            } else {
+                check(target.createNewFile()) { "Could not create file" }
+            }
+            return Uri.fromFile(target)
+        }
+        return checkNotNull(D.createDocument(resolver, parent, mime, name))
+    }
+
+    private fun deleteDocumentRaw(uri: Uri): Boolean =
+        if (isFileUri(uri)) toFile(uri).delete()
+        else D.deleteDocument(resolver, uri)
+
+    suspend fun children(parent: Uri): List<Entry> = listChildren(parent, sorted = true)
+
+    private suspend fun listChildren(parent: Uri, sorted: Boolean): List<Entry> = withContext(Dispatchers.IO) {
         requireGrant(parent)
+        if (isFileUri(parent)) {
+            val dir = toFile(parent)
+            val list = dir.listFiles() ?: error("Cannot read folder")
+            return@withContext buildList(list.size) {
+                for (f in list) {
+                    coroutineContext.ensureActive()
+                    add(entryFromFile(f))
+                }
+            }.let { if (sorted) it.sortedWith(defaultEntryComparator) else it }
+        }
         val uri = D.buildChildDocumentsUriUsingTree(parent, D.getDocumentId(parent))
-        val columns = arrayOf(D.Document.COLUMN_DOCUMENT_ID, D.Document.COLUMN_DISPLAY_NAME, D.Document.COLUMN_MIME_TYPE, D.Document.COLUMN_SIZE, D.Document.COLUMN_FLAGS)
+        val columns = arrayOf(
+            D.Document.COLUMN_DOCUMENT_ID,
+            D.Document.COLUMN_DISPLAY_NAME,
+            D.Document.COLUMN_MIME_TYPE,
+            D.Document.COLUMN_SIZE,
+            D.Document.COLUMN_FLAGS
+        )
         val cursor = resolver.query(uri, columns, null, null, null) ?: error("Storage unavailable")
         cursor.use { c ->
             buildList {
-                while (c.moveToNext()) { coroutineContext.ensureActive(); add(Entry(D.buildDocumentUriUsingTree(parent, c.getString(0)), c.getString(1) ?: "Unnamed", c.getString(2) ?: "application/octet-stream", if(c.isNull(3)) -1 else c.getLong(3), c.getInt(4))) }
-            }.sortedWith(defaultEntryComparator)
+                while (c.moveToNext()) {
+                    coroutineContext.ensureActive()
+                    add(
+                        Entry(
+                            D.buildDocumentUriUsingTree(parent, c.getString(0)),
+                            c.getString(1) ?: "Unnamed",
+                            c.getString(2) ?: "application/octet-stream",
+                            if (c.isNull(3)) -1 else c.getLong(3),
+                            c.getInt(4)
+                        )
+                    )
+                }
+            }.let { if (sorted) it.sortedWith(defaultEntryComparator) else it }
         }
     }
+
     private inline fun <T> queryChildNames(parent: Uri, read: (Cursor, Int) -> T): T {
         requireGrant(parent)
         val uri = D.buildChildDocumentsUriUsingTree(parent, D.getDocumentId(parent))
@@ -43,6 +158,10 @@ class Storage(private val resolver: ContentResolver) {
     }
 
     internal suspend fun childNames(parent: Uri): List<String> = withContext(Dispatchers.IO) {
+        if (isFileUri(parent)) {
+            requireGrant(parent)
+            return@withContext toFile(parent).list()?.toList().orEmpty()
+        }
         queryChildNames(parent) { rows, displayName ->
             buildList {
                 while (rows.moveToNext()) {
@@ -54,6 +173,17 @@ class Storage(private val resolver: ContentResolver) {
     }
 
     private suspend fun hasChildNamed(parent: Uri, name: String): Boolean = withContext(Dispatchers.IO) {
+        if (isFileUri(parent)) {
+            requireGrant(parent)
+            val dir = toFile(parent)
+            if (File(dir, name).exists()) return@withContext true
+            val names = dir.list() ?: return@withContext false
+            for (existing in names) {
+                coroutineContext.ensureActive()
+                if (existing.equals(name, ignoreCase = true)) return@withContext true
+            }
+            return@withContext false
+        }
         queryChildNames(parent) { rows, displayName ->
             while (rows.moveToNext()) {
                 coroutineContext.ensureActive()
@@ -63,6 +193,61 @@ class Storage(private val resolver: ContentResolver) {
             }
             false
         }
+    }
+
+    internal suspend fun queryCategoryOrSearch(
+        root: Uri,
+        category: FileCategory?,
+        query: String,
+        maxResults: Int = 600
+    ): List<Entry> = withContext(Dispatchers.IO) {
+        requireGrant(root)
+        val trimmedQuery = query.trim()
+        val queue = ArrayDeque<Pair<Uri, Int>>()
+        val seen = HashSet<String>()
+        val results = ArrayList<Entry>()
+        queue.add(root to 0)
+        while (queue.isNotEmpty() && results.size < maxResults) {
+            coroutineContext.ensureActive()
+            val (folder, depth) = queue.removeFirst()
+            val key = if (isFileUri(folder)) {
+                runCatching { toFile(folder).canonicalPath }.getOrElse { folder.toString() }
+            } else folder.toString()
+            if (!seen.add(key) || seen.size > 1500) continue
+            val items = try {
+                listChildren(folder, sorted = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                continue
+            }
+            for (item in items) {
+                coroutineContext.ensureActive()
+                if (item.directory) {
+                    if (!item.name.startsWith('.') &&
+                        !item.name.equals("Android", ignoreCase = true) &&
+                        depth < 12 &&
+                        queue.size < 1500
+                    ) {
+                        queue.add(item.uri to depth + 1)
+                    }
+                    if (category == null && trimmedQuery.isNotEmpty() &&
+                        item.name.contains(trimmedQuery, ignoreCase = true)
+                    ) {
+                        results.add(item)
+                        if (results.size >= maxResults) break
+                    }
+                } else {
+                    val categoryMatch = category == null || category.matches(item)
+                    val queryMatch = trimmedQuery.isEmpty() || item.name.contains(trimmedQuery, ignoreCase = true)
+                    if (categoryMatch && queryMatch) {
+                        results.add(item)
+                        if (results.size >= maxResults) break
+                    }
+                }
+            }
+        }
+        results.sortedWith(defaultEntryComparator)
     }
 
     suspend fun createZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
@@ -82,18 +267,18 @@ class Storage(private val resolver: ContentResolver) {
             if (item.directory) for (child in children(item.uri)) visit(child, path + "/" + child.name, depth + 1)
         }
         visit(entry, entry.name, 1)
-        val target = checkNotNull(D.createDocument(resolver, parent, "application/zip", name))
+        val target = createChildDocument(parent, "application/zip", name)
         var total = 0L
         val buffer = ByteArray(64 * 1024)
         try {
-            java.util.zip.ZipOutputStream(checkNotNull(resolver.openOutputStream(target, "w")).buffered()).use { zip ->
+            java.util.zip.ZipOutputStream(openOutput(target).buffered()).use { zip ->
                 for ((item, path) in plan) {
                     coroutineContext.ensureActive()
                     revalidate(item)
                     zip.putNextEntry(java.util.zip.ZipEntry(if (item.directory) path + "/" else path))
                     if (!item.directory) {
                         var bytes = 0L
-                        checkNotNull(resolver.openInputStream(item.uri)).use { input ->
+                        openInput(item.uri).use { input ->
                             while (true) {
                                 coroutineContext.ensureActive()
                                 val n = input.read(buffer)
@@ -111,10 +296,11 @@ class Storage(private val resolver: ContentResolver) {
                 }
             }
         } catch (e: Exception) {
-            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, target) } }
+            withContext(NonCancellable) { runCatching { deleteDocumentRaw(target) } }
             throw e
         }
     }
+
     suspend fun extractZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri)
         requireGrant(parent, true)
@@ -123,7 +309,7 @@ class Storage(private val resolver: ContentResolver) {
         val name = rawStem.ifBlank { "Extracted" }
         require(validName(name))
         check(!hasChildNamed(parent, name)) { "Destination exists" }
-        val root = checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
+        val root = createChildDocument(parent, D.Document.MIME_TYPE_DIR, name)
         val folders = mutableMapOf<List<String>, Uri>(emptyList<String>() to root)
         val paths = HashSet<List<String>>()
         var total = 0L
@@ -137,28 +323,28 @@ class Storage(private val resolver: ContentResolver) {
                 current = folders[key] ?: run {
                     check(folders.size < 10000) { "Too many directories" }
                     check(!hasChildNamed(current, parts[i])) { "Archive name conflict" }
-                    checkNotNull(D.createDocument(resolver, current, D.Document.MIME_TYPE_DIR, parts[i])).also { folders[key] = it }
+                    createChildDocument(current, D.Document.MIME_TYPE_DIR, parts[i]).also { folders[key] = it }
                 }
             }
             return current
         }
         try {
-            java.util.zip.ZipInputStream(checkNotNull(resolver.openInputStream(entry.uri)).buffered()).use { zip ->
+            java.util.zip.ZipInputStream(openInput(entry.uri).buffered()).use { zip ->
                 while (true) {
                     coroutineContext.ensureActive()
                     val item = zip.nextEntry ?: break
                     check(++count <= 10000) { "Too many archive entries" }
                     val parts = zipPath(item.name)
-                    check(paths.add(parts.map { it.lowercase(java.util.Locale.ROOT) })) { "Duplicate archive path" }
+                    check(paths.add(parts.map { it.lowercase(Locale.ROOT) })) { "Duplicate archive path" }
                     if (item.isDirectory) {
                         folder(parts)
                         check(zip.read() == -1) { "Invalid directory entry" }
                     } else {
                         val target = folder(parts.dropLast(1))
                         check(!hasChildNamed(target, parts.last())) { "Archive name conflict" }
-                        val file = checkNotNull(D.createDocument(resolver, target, "application/octet-stream", parts.last()))
+                        val file = createChildDocument(target, "application/octet-stream", parts.last())
                         try {
-                            checkNotNull(resolver.openOutputStream(file, "w")).use { output ->
+                            openOutput(file).use { output ->
                                 while (true) {
                                     coroutineContext.ensureActive()
                                     val n = zip.read(buffer)
@@ -170,7 +356,7 @@ class Storage(private val resolver: ContentResolver) {
                                 }
                             }
                         } catch (e: Exception) {
-                            withContext(NonCancellable) { runCatching { D.deleteDocument(resolver, file) } }
+                            withContext(NonCancellable) { runCatching { deleteDocumentRaw(file) } }
                             throw e
                         }
                     }
@@ -178,12 +364,13 @@ class Storage(private val resolver: ContentResolver) {
                 }
                 check(count > 0) { "Empty or invalid ZIP archive" }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        } catch (e: CancellationException) { throw e }
         catch (e: Exception) { throw java.io.IOException("Extraction incomplete; completed files may remain: " + e.localizedMessage, e) }
     }
+
     suspend fun scan(root: Uri): ScanResult = withContext(Dispatchers.IO) {
         val queue = ArrayDeque<Pair<Uri, Int>>()
-        val seen = HashSet<Uri>()
+        val seen = HashSet<String>()
         val files = ArrayList<Entry>()
         val emptyFolders = ArrayList<Entry>()
         val folders = HashMap<Uri, Entry>()
@@ -193,13 +380,17 @@ class Storage(private val resolver: ContentResolver) {
         while (queue.isNotEmpty()) {
             coroutineContext.ensureActive()
             val (folder, depth) = queue.removeFirst()
-            if (!seen.add(folder)) continue
+            val seenKey = if (isFileUri(folder)) {
+                runCatching { toFile(folder).canonicalPath }.getOrElse { folder.toString() }
+            } else folder.toString()
+            if (!seen.add(seenKey)) continue
             if (seen.size > 2000 || files.size >= 20000) { limited = true; break }
-            val entries = try { children(folder) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++; continue }
+            val entries = try { children(folder) } catch (e: CancellationException) { throw e } catch (_: Exception) { failures++; continue }
             if (entries.isEmpty()) folders[folder]?.let { emptyFolders.add(it) }
             for (entry in entries) {
                 coroutineContext.ensureActive()
                 if (entry.directory) {
+                    if (entry.name.equals("Android", ignoreCase = true) && depth == 0) continue
                     if (depth < 32 && queue.size < 2000) { folders[entry.uri] = entry; queue.add(entry.uri to depth + 1) } else limited = true
                 } else if (files.size < 20000) files.add(entry) else limited = true
             }
@@ -210,7 +401,6 @@ class Storage(private val resolver: ContentResolver) {
         var budget = 512L * 1024 * 1024
         for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }) {
             if (group.size < 2) continue
-            // Stage 1: progressive 64 KiB prefix sample hash for files larger than 128 KiB using a dedicated sample budget.
             val candidateGroups = if (size > 128 * 1024L) {
                 val sampleGroups = mutableMapOf<String, MutableList<Entry>>()
                 val sampleSize = 64 * 1024
@@ -218,18 +408,17 @@ class Storage(private val resolver: ContentResolver) {
                     coroutineContext.ensureActive()
                     if (sampleSize > sampleBudget) { limited = true; continue }
                     try {
-                        val (prefixHash, sampledBytes) = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                        val (prefixHash, sampledBytes) = openInput(entry.uri).use { input ->
                             sampledPrefixSha256(input, sampleSize) { coroutineContext.ensureActive() }
                         }
                         sampleBudget -= sampledBytes
                         sampleGroups.getOrPut(prefixHash) { mutableListOf() }.add(entry)
-                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                    } catch (e: CancellationException) { throw e } catch (_: Exception) { failures++ }
                 }
                 sampleGroups.values.filter { it.size > 1 }
             } else {
                 listOf(group)
             }
-            // Stage 2: full SHA-256 verification only for entries whose size and prefix sample matched.
             for (candidates in candidateGroups) {
                 val hashes = mutableMapOf<String, MutableList<Entry>>()
                 for (entry in candidates) {
@@ -238,7 +427,7 @@ class Storage(private val resolver: ContentResolver) {
                     try {
                         val md = MessageDigest.getInstance("SHA-256")
                         var read = 0L
-                        checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
+                        openInput(entry.uri).use { input ->
                             while (true) {
                                 coroutineContext.ensureActive()
                                 val n = input.read(buffer)
@@ -252,14 +441,32 @@ class Storage(private val resolver: ContentResolver) {
                         check(read == size)
                         val hash = bytesToHex(md.digest())
                         hashes.getOrPut(hash) { mutableListOf() }.add(entry)
-                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failures++ }
+                    } catch (e: CancellationException) { throw e } catch (_: Exception) { failures++ }
                 }
                 duplicates.addAll(hashes.values.filter { it.size > 1 })
             }
         }
-        ScanResult(files.size, files.filter { it.size >= 0 }.sumOf { it.size }, files.sortedByDescending { it.size }.take(100), duplicates, limited, failures, (files.filter { cleanupReason(it.name) != null } + emptyFolders).distinctBy { it.uri })
+        ScanResult(
+            files.size,
+            files.filter { it.size >= 0 }.sumOf { it.size },
+            files.sortedByDescending { it.size }.take(100),
+            duplicates,
+            limited,
+            failures,
+            (files.filter { cleanupReason(it.name) != null } + emptyFolders).distinctBy { it.uri }
+        )
     }
+
     private fun revalidate(entry: Entry): Entry {
+        if (isFileUri(entry.uri)) {
+            val file = toFile(entry.uri)
+            check(file.exists()) { "File unavailable" }
+            val current = entryFromFile(file)
+            check(current.name == entry.name && current.size == entry.size && current.directory == entry.directory) {
+                "File changed; scan again"
+            }
+            return current
+        }
         val columns = arrayOf(D.Document.COLUMN_DISPLAY_NAME, D.Document.COLUMN_SIZE, D.Document.COLUMN_FLAGS, D.Document.COLUMN_MIME_TYPE)
         val current = checkNotNull(resolver.query(entry.uri, columns, null, null, null)).use { c ->
             check(c.moveToFirst()) { "File unavailable" }
@@ -268,14 +475,19 @@ class Storage(private val resolver: ContentResolver) {
         check(current.name == entry.name && current.size == entry.size && current.mime == entry.mime) { "File changed; scan again" }
         return current
     }
+
+    private fun documentIdentity(uri: Uri): String =
+        if (isFileUri(uri)) runCatching { toFile(uri).canonicalPath }.getOrElse { toFile(uri).absolutePath }
+        else D.getDocumentId(uri)
+
     suspend fun removeDuplicate(entry: Entry, keep: Entry) = withContext(Dispatchers.IO) {
-        require(entry.uri != keep.uri && entry.uri.authority == keep.uri.authority)
-        require(D.getDocumentId(entry.uri) != D.getDocumentId(keep.uri))
+        require(entry.uri != keep.uri && entry.uri.scheme == keep.uri.scheme)
+        require(documentIdentity(entry.uri) != documentIdentity(keep.uri))
         require(!entry.directory && !keep.directory && entry.size > 0 && entry.size == keep.size)
         val target = revalidate(entry)
         revalidate(keep)
-        checkNotNull(resolver.openInputStream(target.uri)).buffered().use { first ->
-            checkNotNull(resolver.openInputStream(keep.uri)).buffered().use { second ->
+        openInput(target.uri).buffered().use { first ->
+            openInput(keep.uri).buffered().use { second ->
                 check(equalStreams(first, second, entry.size) { coroutineContext.ensureActive() }) { "Files differ; scan again" }
             }
         }
@@ -284,6 +496,7 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         delete(checked)
     }
+
     suspend fun cleanCandidate(entry: Entry) = withContext(Dispatchers.IO) {
         val current = revalidate(entry)
         if (current.directory) check(children(current.uri).isEmpty()) { "Folder is no longer empty" }
@@ -291,15 +504,27 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         delete(current)
     }
+
+    private fun isSameOrDescendantFile(ancestor: File, candidate: File): Boolean {
+        val ancestorPath = ancestor.canonicalPath
+        val candidatePath = candidate.canonicalPath
+        if (candidatePath == ancestorPath) return true
+        val prefix = if (ancestorPath.endsWith(File.separatorChar)) ancestorPath else ancestorPath + File.separatorChar
+        return candidatePath.startsWith(prefix)
+    }
+
     private suspend fun containsDirectory(root: Uri, target: Uri): Boolean {
+        if (isFileUri(root) && isFileUri(target)) {
+            return isSameOrDescendantFile(toFile(root), toFile(target))
+        }
         val queue = ArrayDeque<Uri>()
         val seen = HashSet<String>()
         queue.add(root)
         while (queue.isNotEmpty()) {
             coroutineContext.ensureActive()
             val folder = queue.removeFirst()
-            val id = D.getDocumentId(folder)
-            if (id == D.getDocumentId(target)) return true
+            val id = documentIdentity(folder)
+            if (id == documentIdentity(target)) return true
             if (!seen.add(id)) continue
             check(seen.size <= 10000) { "Cannot safely verify destination ancestry" }
             for (child in children(folder)) {
@@ -311,16 +536,33 @@ class Storage(private val resolver: ContentResolver) {
         }
         return false
     }
+
     suspend fun moveDirectory(entry: Entry, sourceParent: Uri, destination: Uri): Uri = withContext(Dispatchers.IO) {
         require(entry.directory)
         requireGrant(entry.uri, true)
         requireGrant(sourceParent, true)
         requireGrant(destination, true)
+        if (isFileUri(entry.uri) && isFileUri(destination)) {
+            val current = revalidate(entry)
+            check(current.flags and D.Document.FLAG_SUPPORTS_MOVE != 0) { "Folder move permission unavailable" }
+            val srcFile = toFile(entry.uri)
+            check(srcFile.parentFile?.canonicalFile == toFile(sourceParent).canonicalFile) { "Source folder changed" }
+            val dstDir = toFile(destination)
+            check(srcFile.parentFile?.canonicalFile != dstDir.canonicalFile) { "Already in destination" }
+            check(!isSameOrDescendantFile(srcFile, dstDir)) { "Cannot move into itself or descendant" }
+            val target = File(dstDir, entry.name)
+            check(!target.exists()) { "Destination already exists" }
+            coroutineContext.ensureActive()
+            check(srcFile.renameTo(target)) {
+                "This folder cannot be moved directly. Copy it to the destination and review the copy before removing the original."
+            }
+            return@withContext Uri.fromFile(target)
+        }
         check(entry.uri.authority == destination.authority && D.getTreeDocumentId(entry.uri) == D.getTreeDocumentId(destination)) { "Folder move requires the same storage grant" }
         check(D.getDocumentId(sourceParent) != D.getDocumentId(destination)) { "Already in destination" }
         check(D.getDocumentId(entry.uri) != D.getDocumentId(destination)) { "Cannot move into itself" }
         val descendant = if (android.os.Build.VERSION.SDK_INT >= 29) D.isChildDocument(resolver, entry.uri, destination)
-            else containsDirectory(entry.uri, destination)
+        else containsDirectory(entry.uri, destination)
         check(!descendant) { "Cannot move into a descendant" }
         check(revalidate(entry).flags and D.Document.FLAG_SUPPORTS_MOVE != 0) { "Provider does not support folder move" }
         check(children(sourceParent).any { it.uri == entry.uri }) { "Source folder changed" }
@@ -328,22 +570,24 @@ class Storage(private val resolver: ContentResolver) {
         coroutineContext.ensureActive()
         checkNotNull(D.moveDocument(resolver, entry.uri, sourceParent, destination)) { "Provider move failed" }
     }
+
     suspend fun copyDirectory(entry: Entry, parent: Uri, destinationName: String = entry.name, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         require(entry.directory && validName(entry.name) && validName(destinationName))
         requireGrant(entry.uri)
         requireGrant(parent, true)
-        // Reject same-provider destination aliases and descendants before creating anything.
         val seen = HashSet<String>()
         val queue = ArrayDeque<Pair<Entry, Int>>()
         val plan = LinkedHashMap<Entry, List<Entry>>()
         queue.add(entry to 0)
         var count = 0
+        val parentId = documentIdentity(parent)
         while (queue.isNotEmpty()) {
             coroutineContext.ensureActive()
             val (folder, depth) = queue.removeFirst()
             check(depth <= 32 && ++count <= 10000) { "Directory copy limit exceeded" }
-            check(seen.add(D.getDocumentId(folder.uri))) { "Directory cycle detected" }
-            check(folder.uri.authority != parent.authority || D.getDocumentId(folder.uri) != D.getDocumentId(parent)) { "Cannot copy into source directory" }
+            val folderId = documentIdentity(folder.uri)
+            check(seen.add(folderId)) { "Directory cycle detected" }
+            check(folder.uri.scheme != parent.scheme || folder.uri.authority != parent.authority || folderId != parentId) { "Cannot copy into source directory" }
             val items = children(folder.uri)
             check(items.size <= 10000 - count) { "Directory copy limit exceeded" }
             count += items.count { !it.directory }
@@ -374,29 +618,40 @@ class Storage(private val resolver: ContentResolver) {
             }
             target
         } catch (e: Exception) {
-            // Preserve completed files; provider recursive deletion is not guaranteed safe.
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is CancellationException) throw e
             throw IllegalStateException("Directory copy incomplete; destination may contain copied files", e)
         }
     }
+
     suspend fun transfer(entry: Entry, parent: Uri, move: Boolean, destinationName: String = entry.name, progress: (Long) -> Unit): Uri = withContext(Dispatchers.IO) {
         requireGrant(entry.uri, move)
         requireGrant(parent, true)
         require(!entry.directory && validName(entry.name) && validName(destinationName))
-        if (move) check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
+        val current = revalidate(entry)
+        if (move) check(current.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
         check(!hasChildNamed(parent, destinationName)) { "Destination already exists" }
-        val target = checkNotNull(D.createDocument(resolver, parent, entry.mime, destinationName))
+        coroutineContext.ensureActive()
+        if (move && isFileUri(entry.uri) && isFileUri(parent)) {
+            val src = toFile(entry.uri)
+            val dst = File(toFile(parent), destinationName)
+            check(!dst.exists()) { "Destination already exists" }
+            if (src.renameTo(dst)) {
+                progress(dst.length())
+                return@withContext Uri.fromFile(dst)
+            }
+        }
+        val target = createChildDocument(parent, entry.mime, destinationName)
         var verified = false
         try {
             check(target != entry.uri) { "Destination equals source" }
             val expectedSize = entry.size.takeIf { it >= 0 }
-            val original = checkNotNull(resolver.openInputStream(entry.uri)).use { input ->
-                checkNotNull(resolver.openOutputStream(target, "w")).use { output ->
+            val original = openInput(entry.uri).use { input ->
+                openOutput(target).use { output ->
                     transferDigest(input, output, expectedSize, progress)
                 }
             }
             suspend fun verify(uri: Uri): TransferDigest =
-                checkNotNull(resolver.openInputStream(uri)).use { transferDigest(it, expected = original.bytes) }
+                openInput(uri).use { transferDigest(it, expected = original.bytes) }
             check(original.matches(verify(target))) { "Destination verification failed" }
             if (move) check(original.matches(verify(entry.uri))) { "Source changed during transfer" }
             coroutineContext.ensureActive()
@@ -405,14 +660,21 @@ class Storage(private val resolver: ContentResolver) {
             target
         } finally {
             if (!verified && target != entry.uri) withContext(NonCancellable) {
-                check(D.deleteDocument(resolver, target)) { "Incomplete destination could not be removed" }
+                check(deleteDocumentRaw(target)) { "Incomplete destination could not be removed" }
             }
         }
     }
+
     suspend fun availableBytes(parent: Uri): Long? = withContext(Dispatchers.IO) {
         requireGrant(parent)
+        if (isFileUri(parent)) {
+            return@withContext try {
+                StatFs(toFile(parent).absolutePath).availableBytes.takeIf { it >= 0 }
+            } catch (_: Exception) {
+                null
+            }
+        }
         val rootsUri = D.buildRootsUri(checkNotNull(parent.authority))
-        // Root IDs are not necessarily document IDs. Match the root document ID only.
         val treeId = D.getTreeDocumentId(parent)
         val columns = arrayOf(D.Root.COLUMN_DOCUMENT_ID, D.Root.COLUMN_AVAILABLE_BYTES)
         try {
@@ -426,35 +688,54 @@ class Storage(private val resolver: ContentResolver) {
         catch (_: IllegalArgumentException) { null }
         catch (_: UnsupportedOperationException) { null }
     }
-    suspend fun create(parent: Uri, name: String) = withContext(Dispatchers.IO) {
+
+    suspend fun create(parent: Uri, name: String): Uri = withContext(Dispatchers.IO) {
         requireGrant(parent, true)
         require(validName(name))
-        checkNotNull(D.createDocument(resolver, parent, D.Document.MIME_TYPE_DIR, name))
+        createChildDocument(parent, D.Document.MIME_TYPE_DIR, name)
     }
-    suspend fun rename(entry: Entry, name: String) = withContext(Dispatchers.IO) {
+
+    suspend fun rename(entry: Entry, name: String): Uri = withContext(Dispatchers.IO) {
         requireGrant(entry.uri, true)
         require(validName(name))
         check(revalidate(entry).flags and D.Document.FLAG_SUPPORTS_RENAME != 0)
+        if (isFileUri(entry.uri)) {
+            val src = toFile(entry.uri)
+            val parent = checkNotNull(src.parentFile) { "Cannot rename root directory" }
+            val dst = File(parent, name)
+            check(!dst.exists()) { "Destination already exists" }
+            check(src.renameTo(dst)) { "Rename failed" }
+            return@withContext Uri.fromFile(dst)
+        }
         checkNotNull(D.renameDocument(resolver, entry.uri, name))
     }
+
     suspend fun delete(entry: Entry) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri, true)
         val current = revalidate(entry)
         check(current.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
         if (current.directory) check(children(current.uri).isEmpty()) { "Only empty folders can be deleted" }
         coroutineContext.ensureActive()
-        check(D.deleteDocument(resolver, entry.uri))
+        check(deleteDocumentRaw(entry.uri))
     }
 }
+
 fun validName(name: String) = name.isNotBlank() && name != "." && name != ".." && name.none { it == '/' || it == '\\' || it == '\u0000' }
 
 data class ScanResult(val count: Int, val bytes: Long, val largest: List<Entry>, val possibleDuplicates: List<List<Entry>>, val limited: Boolean, val failures: Int, val candidates: List<Entry>)
 
-internal fun cleanupReason(name: String): String? = when (name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)) {
-    "tmp", "temp" -> "Possible temporary file"
-    "part", "partial", "crdownload" -> "Possible incomplete download"
-    "apk" -> "APK installer"
-    else -> null
+internal fun cleanupReason(name: String): String? {
+    val lower = name.lowercase(Locale.ROOT)
+    if (lower.startsWith(".trashed-") || lower.startsWith("~$") || lower == "thumbs.db" || lower == ".ds_store") {
+        return "Temporary or trash file"
+    }
+    return when (lower.substringAfterLast('.', "")) {
+        "tmp", "temp", "cache", "bak", "old", "orig" -> "Possible temporary file"
+        "log", "dmp", "crash" -> "Diagnostic or log file"
+        "part", "partial", "crdownload", "download" -> "Possible incomplete download"
+        "apk", "apks", "xapk" -> "APK installer"
+        else -> null
+    }
 }
 
 private val HEX_CHARS = "0123456789abcdef".toCharArray()
@@ -469,7 +750,7 @@ internal fun bytesToHex(bytes: ByteArray): String {
     return String(out)
 }
 
-internal inline fun sampledPrefixSha256(input: java.io.InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): Pair<String, Int> {
+internal inline fun sampledPrefixSha256(input: InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): Pair<String, Int> {
     require(maxBytes > 0)
     val md = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(minOf(maxBytes, 16 * 1024))
@@ -486,7 +767,7 @@ internal inline fun sampledPrefixSha256(input: java.io.InputStream, maxBytes: In
     return bytesToHex(md.digest()) to totalRead
 }
 
-internal inline fun equalStreams(a: java.io.InputStream, b: java.io.InputStream, expected: Long, checkCancellation: () -> Unit): Boolean {
+internal inline fun equalStreams(a: InputStream, b: InputStream, expected: Long, checkCancellation: () -> Unit): Boolean {
     var remaining = expected
     val left = ByteArray(32768)
     val right = ByteArray(32768)

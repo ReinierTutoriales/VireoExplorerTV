@@ -152,6 +152,14 @@ private suspend fun decode(
         } else {
             DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
         }
+    } else if (entry.uri.scheme == "file") {
+        val file = java.io.File(requireNotNull(entry.uri.path))
+        if (Build.VERSION.SDK_INT >= 28) {
+            decodeSourceVisual(ImageDecoder.createSource(file), width, height)
+        } else {
+            val bytes = java.io.FileInputStream(file).use { readBoundedImageBytes(it) }
+            DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
+        }
     } else {
         val contentResolver = checkNotNull(resolver)
         if (Build.VERSION.SDK_INT >= 28) {

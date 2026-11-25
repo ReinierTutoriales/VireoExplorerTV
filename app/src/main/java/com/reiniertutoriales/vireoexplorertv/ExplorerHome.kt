@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -70,6 +71,7 @@ internal fun ExplorerHome(
     content: LazyListScope.() -> Unit
 ) {
     val initialFocus = remember { FocusRequester() }
+    val drawerHomeFocus = remember { FocusRequester() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     LaunchedEffect(page) { initialFocus.requestFocus() }
     val colors = MaterialTheme.colorScheme
@@ -92,6 +94,15 @@ internal fun ExplorerHome(
                     .fillMaxHeight()
                     .background(Color.Black)
                     .padding(start = 16.dp, top = 24.dp, bottom = 24.dp, end = 8.dp)
+                    .focusProperties {
+                        onEnter = {
+                            if (page == ExplorerPage.HOME) {
+                                drawerHomeFocus.requestFocus()
+                            } else {
+                                initialFocus.requestFocus()
+                            }
+                        }
+                    }
                     .selectableGroup(),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -101,9 +112,11 @@ internal fun ExplorerHome(
                         selected = destination == page,
                         onClick = { onPage(destination) },
                         leadingContent = { ExplorerIcon(destination.icon) },
-                        modifier = if (destination == page && page != ExplorerPage.HOME) {
-                            Modifier.focusRequester(initialFocus)
-                        } else Modifier,
+                        modifier = when {
+                            destination == ExplorerPage.HOME -> Modifier.focusRequester(drawerHomeFocus)
+                            destination == page -> Modifier.focusRequester(initialFocus)
+                            else -> Modifier
+                        },
                         shape = NavigationDrawerItemDefaults.shape(shape = VireoPillShape),
                         colors = drawerItemColors,
                         scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)

@@ -139,6 +139,14 @@ internal class ExplorerModel(application: Application, private val savedState: S
         return try {
             val restored = uris.map(Uri::parse)
             val root = restored.first()
+            if (root.scheme == "file") {
+                if (!hasDirectStorageAccess(application)) return emptyList()
+                val rootFile = java.io.File(root.path ?: return emptyList())
+                if (!rootFile.exists() || restored.any { it.scheme != "file" || !(java.io.File(it.path ?: "").exists()) }) {
+                    return emptyList()
+                }
+                return restored.zip(labels)
+            }
             val grants = application.contentResolver.persistedUriPermissions
             val storage = Storage(application.contentResolver)
             if (grants.none { it.isReadPermission && storage.root(it.uri) == root }) return emptyList()
@@ -198,6 +206,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
         sortIndex: Int
     ) {
         if (parent == null) {
+            listingGeneration++
             listingJob?.cancel()
             listingJob = null
             activeListing = null
@@ -210,6 +219,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
         val source = entriesFor(parent)
         val folderSearch = search
         if (visibleParent != parent) {
+            listingGeneration++
             listingJob?.cancel()
             listingJob = null
             activeListing = null
@@ -218,6 +228,10 @@ internal class ExplorerModel(application: Application, private val savedState: S
             visibleEntries = emptyList()
         }
         if (completedListing?.matches(parent, source, category, homeSearch, folderSearch, sortIndex) == true) {
+            listingGeneration++
+            listingJob?.cancel()
+            listingJob = null
+            activeListing = null
             listingPending = false
             return
         }
@@ -226,6 +240,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
         }
         // Fast synchronous path when source is empty or default A-Z sort with no active filters.
         if (source.isEmpty() || (category == null && homeSearch.isEmpty() && folderSearch.isEmpty() && sortIndex == 0)) {
+            listingGeneration++
             listingJob?.cancel()
             listingJob = null
             activeListing = null
@@ -302,6 +317,9 @@ internal class ExplorerModel(application: Application, private val savedState: S
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (generation == loadGeneration) {
+                    listingGeneration++
+                    listingJob?.cancel()
+                    listingJob = null
                     entries = emptyList()
                     visibleEntries = emptyList()
                     completedListing = null
