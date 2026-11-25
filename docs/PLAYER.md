@@ -3,3 +3,6 @@ Use latest verified compatible stable AndroidX Media3 ExoPlayer, MediaSession an
 
 ## Default TV caption appearance
 Use Media3 SubtitleView and CaptionStyleCompat: yellow #FFE600 text, black outline, transparent background/window, sans-serif-medium, fractional text size 0.0533 by default (0.04/0.07 alternatives), bottom padding 0.08. Override embedded text styles and sizes for consistent readability; bitmap subtitles retain authored appearance. Outline thickness is controlled by Media3. Validate visual contrast, ASS layout and TV viewing distance; no custom subtitle renderer.
+
+## Media engine recovery and track diagnostics (2026-11-25)
+Use the existing Media3 load-error policy for automatic loading retries; preserve typed DataSourceException for invalid SMB seek positions so permanent range errors are not retried as transport failures. Manual Retry on an existing failed player uses prepare() instead of replacing the session. Video tracks expose supported selections and automatic selection. Sources: https://developer.android.com/reference/androidx/media3/datasource/DataSourceException ; https://developer.android.com/reference/androidx/media3/exoplayer/upstream/DefaultLoadErrorHandlingPolicy ; https://developer.android.com/media/media3/exoplayer/customization . CI and connection interruption validation pending.

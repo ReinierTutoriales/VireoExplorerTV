@@ -147,6 +147,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
     }
     var retry by remember(entry.uri) { mutableIntStateOf(0) }
+    var playbackFailure by remember(entry.uri) { mutableStateOf<PlaybackException?>(null) }
     LifecycleStartEffect(entry.uri, sourceFactory, retry) {
         var session: MediaSession? = null
         var active: ExoPlayer? = null
@@ -202,7 +203,10 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
                     captionPresent = cueGroup.cues.isNotEmpty()
                 }
-                override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
+                override fun onPlayerError(value: PlaybackException) {
+                    playbackFailure = value
+                    error = value.errorCodeName
+                }
             })
             session = MediaSession.Builder(context, p).build()
             val resumePlayback = wantsPlayback
@@ -212,6 +216,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             player = p
         }
         error = null
+        playbackFailure = null
         try { start() } catch (e: Exception) {
             stop()
             error = e.localizedMessage ?: "Cannot initialize player"
@@ -367,6 +372,9 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         val p = player
         if (showInfo) {
             if (video) Text(if (firstFrame) "Video rendered" else "Video not rendered")
+            if (video && tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO } && tracks.groups.none { group -> group.type == C.TRACK_TYPE_VIDEO && (0 until group.length).any { group.isTrackSupported(it) } }) {
+                Text("No supported video track", color = MaterialTheme.colorScheme.error)
+            }
             if (tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }) Text(if (captionPresent) "Subtitle cue active" else "No active subtitle cue")
             LazyColumn(Modifier.heightIn(max = 180.dp)) {
                 items(tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO || it.type == C.TRACK_TYPE_TEXT }) { group ->
@@ -379,6 +387,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         if (trackType != C.TRACK_TYPE_UNKNOWN && p != null) {
             LazyColumn(Modifier.heightIn(max = 200.dp)) {
                 item { OutlinedButton(modifier = Modifier.focusRequester(tracksFocus), onClick = { trackType = C.TRACK_TYPE_UNKNOWN; controlsFocus.requestFocus() }) { Text("Close tracks") } }
+                if (trackType != C.TRACK_TYPE_TEXT) item {
+                    Button(onClick = {
+                        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().clearOverridesOfType(trackType).setTrackTypeDisabled(trackType, false).build()
+                        trackType = C.TRACK_TYPE_UNKNOWN
+                        controlsFocus.requestFocus()
+                    }) { Text("Automatic") }
+                }
                 if (trackType == C.TRACK_TYPE_TEXT) item {
                     Button(onClick = {
                         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
@@ -405,7 +420,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             OutlinedButton(modifier = Modifier.focusRequester(closeFocus), onClick = onClose) { Text("Back") }
-            if (error != null) Button(onClick = { retry++ }) { Text("Retry") }
+            if (error != null) Button(onClick = {
+                if (p != null && playbackFailure != null) {
+                    error = null
+                    playbackFailure = null
+                    p.prepare()
+                } else retry++
+            }) { Text("Retry") }
             OutlinedButton(enabled = seekable, onClick = { p?.seekBack() }) { Text("−10s") }
             Button(modifier = Modifier.focusRequester(controlsFocus), enabled = p != null, onClick = {
                 p?.let(::togglePlayback)
@@ -422,6 +443,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO },
                 onClick = { showInfo = false; trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
+            if (video && tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }) OutlinedButton(
+                onClick = { showInfo = false; trackType = C.TRACK_TYPE_VIDEO }) { Text("Video tracks") }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT },
                 onClick = { showInfo = false; trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT },

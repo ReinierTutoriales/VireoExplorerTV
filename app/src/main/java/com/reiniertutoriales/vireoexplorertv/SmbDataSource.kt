@@ -5,6 +5,8 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DataSourceException
+import androidx.media3.common.PlaybackException
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
@@ -165,7 +167,7 @@ internal class SmbDataSource(
             file = f
             val size = f.fileInformation.standardInformation.endOfFile
             offset = dataSpec.position
-            if (offset > size) throw IOException("Position outside file")
+            if (offset > size) throw DataSourceException(PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE)
             remaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) size - offset else minOf(dataSpec.length, size - offset)
             uri = dataSpec.uri
             started = true
@@ -173,6 +175,7 @@ internal class SmbDataSource(
             return if (dataSpec.length == C.LENGTH_UNSET.toLong()) remaining else dataSpec.length
         } catch (e: Exception) {
             close()
+            if (e is DataSourceException) throw e
             throw IOException("SMB open failed", e)
         }
     }
