@@ -32,3 +32,6 @@ Before writing or refactoring any feature, inspect the existing consumers and lo
 Folder browsing must prioritize visible file/folder content rather than permanent side panels or decorative cards. Use compact native navigation, adaptive lazy grids, recognizable local Material Symbols and contextual details on demand. Inspect actual screenshots and D-pad traversal before claiming visual acceptance. Current stable Compose 1.13.0 and TV Material 1.1.0 verified 2026-11-25; do not add obsolete icon packs or mobile Material stacks.
 
 - Apply Google's official Compose performance skill (https://developer.android.com/agents/skills/jetpack-compose/jetpack-compose-performance/skill), including lazy content types and hoisted shared flows. Use the native expandable TV NavigationDrawer rather than a custom icon rail. Audit dependency graphs and actual consumers before removal; do not add mobile Material or legacy icon dependencies. Remote and local file surfaces must share the same visual hierarchy.
+
+## Mandatory design execution
+Apply AGENTS.md continuous modernization gate to every screen and interaction. Read official TV guidance and current Compose performance instructions before editing; use native supported equivalents, remove superseded UI and icon code, inspect actual screenshots and test focus/operations. A library upgrade is not a UI modernization.
