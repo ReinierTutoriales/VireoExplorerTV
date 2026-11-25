@@ -46,14 +46,14 @@ internal class SmbEndpoint(val host: String, val share: String, val user: String
 private data class SmbEntry(val name: String, val directory: Boolean, val bytes: Long)
 
 private suspend fun <T> withSmbShare(session: SmbShareSession, operation: suspend (DiskShare) -> T): T =
-    session.executeSuspend(operation)
+    session.executeSuspend(block = operation)
 
 internal fun formatSmbUriAuthority(host: String): String {
     val clean = host.substringBefore('%')
     return if (':' in clean && !clean.startsWith('[')) "[$clean]" else clean
 }
 
-private suspend fun listSmb(session: SmbShareSession, path: String): List<SmbEntry> = withSmbShare(session) { share ->
+private suspend fun listSmb(session: SmbShareSession, path: String): List<SmbEntry> = session.executeSuspend(retryReadOnly = true) { share ->
     share.list(path).asSequence().filter { it.fileName != "." && it.fileName != ".." }
         .take(5001).map { SmbEntry(it.fileName, it.fileAttributes and 16L != 0L, it.endOfFile) }
         .toList().also { check(it.size <= 5000) { "Directory limit exceeded" } }

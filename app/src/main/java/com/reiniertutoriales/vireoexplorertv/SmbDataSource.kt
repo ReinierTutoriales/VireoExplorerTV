@@ -26,6 +26,15 @@ import java.io.IOException
 import java.util.EnumSet
 import java.util.concurrent.TimeUnit
 
+// Only explicitly read-only operations can be replayed after a lost connection.
+internal suspend fun <T, R> retrySmbReadOnly(
+    readOnly: Boolean, failure: Exception, reconnect: () -> T?, operation: suspend (T) -> R
+): R {
+    if (!readOnly || failure is CancellationException) throw failure
+    val recovered = reconnect() ?: throw failure
+    return operation(recovered)
+}
+
 internal class SmbShareSession(endpoint: SmbEndpoint) : Closeable {
     private val host = endpoint.host
     private val shareName = endpoint.share
@@ -96,15 +105,14 @@ internal class SmbShareSession(endpoint: SmbEndpoint) : Closeable {
         }
     }
 
-    suspend fun <T> executeSuspend(block: suspend (DiskShare) -> T): T = withContext(Dispatchers.IO) {
+    suspend fun <T> executeSuspend(retryReadOnly: Boolean = false, block: suspend (DiskShare) -> T): T = withContext(Dispatchers.IO) {
         val active = acquireShare()
         try {
             block(active)
         } catch (c: CancellationException) {
             throw c
         } catch (first: Exception) {
-            val reconnect = reconnectAfterFailure(active) ?: throw first
-            block(reconnect)
+            retrySmbReadOnly(retryReadOnly, first, { reconnectAfterFailure(active) }, block)
         }
     }
 

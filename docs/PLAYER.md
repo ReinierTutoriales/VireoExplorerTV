@@ -6,3 +6,6 @@ Use Media3 SubtitleView and CaptionStyleCompat: yellow #FFE600 text, black outli
 
 ## Media engine recovery and track diagnostics (2026-11-25)
 Use the existing Media3 load-error policy for automatic loading retries; preserve typed DataSourceException for invalid SMB seek positions so permanent range errors are not retried as transport failures. Manual Retry on an existing failed player uses prepare() instead of replacing the session. Video tracks expose supported selections and automatic selection. Sources: https://developer.android.com/reference/androidx/media3/datasource/DataSourceException ; https://developer.android.com/reference/androidx/media3/exoplayer/upstream/DefaultLoadErrorHandlingPolicy ; https://developer.android.com/media/media3/exoplayer/customization . CI and connection interruption validation pending.
+
+## SMB replay safety
+Only explicitly read-only directory listing and opening a read-only handle may be automatically replayed after confirmed connection loss. Upload, download-to-provider, mkdir, rename and delete must not replay the entire operation after an ambiguous failure; report the failure and allow explicit refresh/reconciliation. Media3 retains its native load retry policy and offset-based reads. Regression tests verify replay policy and cancellation; actual network interruption remains a separate runtime acceptance requirement.
