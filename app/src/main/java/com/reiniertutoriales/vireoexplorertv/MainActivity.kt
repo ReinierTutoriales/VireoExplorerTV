@@ -42,6 +42,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -300,9 +302,14 @@ class MainActivity : ComponentActivity() {
         }
 
         val rootUriInPath = model.path.firstOrNull()?.first
+        val parentWritable by produceState(false, parent, directStorageWritable, model.revision) {
+            value = if (parent?.scheme == "file" && directStorageWritable) {
+                withContext(Dispatchers.IO) { File(parent.path.orEmpty()).canWrite() }
+            } else false
+        }
         val writable = when {
             rootUriInPath == null -> false
-            rootUriInPath.scheme == "file" -> directStorageWritable && (parent?.path?.let { File(it).canWrite() } ?: false)
+            rootUriInPath.scheme == "file" -> parentWritable
             else -> model.roots.any { it in writableRoots && storage.root(it) == rootUriInPath }
         }
 
@@ -481,6 +488,7 @@ class MainActivity : ComponentActivity() {
                 if (page == ExplorerPage.FILES && (category != null || homeSearch.isNotEmpty())) {
                     val scanTarget = activeDirectRoot ?: model.roots.firstOrNull()?.let { storage.root(it) }
                     if (scanTarget != null) {
+                        categoryResults = emptyList()
                         categoryLoading = true
                         try {
                             val raw = storage.queryCategoryOrSearch(scanTarget, category, homeSearch)
@@ -489,6 +497,7 @@ class MainActivity : ComponentActivity() {
                             throw e
                         } catch (_: Exception) {
                             categoryResults = emptyList()
+                            model.error = "Unable to search this storage location"
                         } finally {
                             categoryLoading = false
                         }

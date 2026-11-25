@@ -185,3 +185,9 @@ Reviewed from a9fc7c2. Returning to an already-computed listing or the default o
 Direct file moves revalidate the source before attempting a filesystem rename and check cancellation before mutation. Direct folder moves verify the source parent and current move capability. If rename fails, the operation reports an error and preserves the source. The former copy-then-recursive-delete fallback could remove files added or modified during the copy. Cross-filesystem folder moves require verified source snapshots before automatic deletion can be supported.
 
 Saved local folders now match the internal-storage root using a complete directory boundary. Direct-path APK installation and handoff to external viewers remain incomplete and need content URIs with scoped grants. No runtime or performance acceptance is claimed by this source review.
+
+## Responsiveness follow-up
+
+The app inventory no longer waits for cache traversal and the quick temporary-file scan before loading. Both operations retain lifecycle cancellation and storage-scan exceptions produce a visible error. Local directory writability is queried on an IO dispatcher instead of during composition. Recursive category searches request unsorted children and sort only the final result, avoiding a sort for every visited directory. Starting another search clears the previous results and read failures produce an error.
+
+These changes remove identified work from the UI and inventory-loading paths. Runtime navigation, scan latency and frame timing still need validation on Android TV. They are not evidence that all tools or the visual design are accepted.

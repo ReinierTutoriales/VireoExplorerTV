@@ -108,7 +108,9 @@ class Storage(private val resolver: ContentResolver) {
         if (isFileUri(uri)) toFile(uri).delete()
         else D.deleteDocument(resolver, uri)
 
-    suspend fun children(parent: Uri): List<Entry> = withContext(Dispatchers.IO) {
+    suspend fun children(parent: Uri): List<Entry> = listChildren(parent, sorted = true)
+
+    private suspend fun listChildren(parent: Uri, sorted: Boolean): List<Entry> = withContext(Dispatchers.IO) {
         requireGrant(parent)
         if (isFileUri(parent)) {
             val dir = toFile(parent)
@@ -118,7 +120,7 @@ class Storage(private val resolver: ContentResolver) {
                     coroutineContext.ensureActive()
                     add(entryFromFile(f))
                 }
-            }.sortedWith(defaultEntryComparator)
+            }.let { if (sorted) it.sortedWith(defaultEntryComparator) else it }
         }
         val uri = D.buildChildDocumentsUriUsingTree(parent, D.getDocumentId(parent))
         val columns = arrayOf(
@@ -143,7 +145,7 @@ class Storage(private val resolver: ContentResolver) {
                         )
                     )
                 }
-            }.sortedWith(defaultEntryComparator)
+            }.let { if (sorted) it.sortedWith(defaultEntryComparator) else it }
         }
     }
 
@@ -213,7 +215,7 @@ class Storage(private val resolver: ContentResolver) {
             } else folder.toString()
             if (!seen.add(key) || seen.size > 1500) continue
             val items = try {
-                children(folder)
+                listChildren(folder, sorted = false)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

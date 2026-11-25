@@ -181,19 +181,6 @@ internal fun AppManager(
     LaunchedEffect(revision, directGranted) {
         loading = true
         error = null
-        val (cap, cacheBytes, tempReport) = withContext(Dispatchers.IO) {
-            val stat = try {
-                val targetPath = primaryDirectStorageDir()?.absolutePath ?: context.filesDir.absolutePath
-                val fs = StatFs(targetPath)
-                fs.totalBytes to fs.availableBytes
-            } catch (_: IllegalArgumentException) { null }
-            val ownCache = computeDirectoryBytes(context.cacheDir) + computeDirectoryBytes(context.externalCacheDir)
-            val quickScan = if (directGranted) scanQuickTemporaryFiles(primaryDirectStorageDir()) else null
-            Triple(stat, ownCache, quickScan)
-        }
-        capacity = cap
-        ownCacheBytes = cacheBytes
-        quickTempScan = tempReport
         try {
             apps = withContext(Dispatchers.IO) {
                 val pm = context.packageManager
@@ -208,6 +195,29 @@ internal fun AppManager(
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { error = "Unable to list visible applications" }
         finally { loading = false }
+    }
+
+    LaunchedEffect(revision, directGranted) {
+        quickTempScan = null
+        try {
+            val (cap, cacheBytes, tempReport) = withContext(Dispatchers.IO) {
+                val stat = try {
+                    val targetPath = primaryDirectStorageDir()?.absolutePath ?: context.filesDir.absolutePath
+                    val fs = StatFs(targetPath)
+                    fs.totalBytes to fs.availableBytes
+                } catch (_: IllegalArgumentException) { null }
+                val ownCache = computeDirectoryBytes(context.cacheDir) + computeDirectoryBytes(context.externalCacheDir)
+                val quickScan = if (directGranted) scanQuickTemporaryFiles(primaryDirectStorageDir()) else null
+                Triple(stat, ownCache, quickScan)
+            }
+            capacity = cap
+            ownCacheBytes = cacheBytes
+            quickTempScan = tempReport
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            error = "Storage analysis unavailable"
+        }
     }
 
     val sortLabels = listOf(
