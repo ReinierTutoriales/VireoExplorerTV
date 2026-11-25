@@ -29,7 +29,6 @@
     <string name="explorer_no_transfer">No transfers in progress.</string>
     <string name="explorer_usb_unavailable">No USB storage detected. Connect a drive and try again.</string>
     <string name="explorer_no_category_files">No files of this type in this folder.</string>
-    <string name="explorer_folder_access">Grant storage access to browse internal TV files and USB drives directly.</string>
     <string name="explorer_grant_storage_title">Enable TV storage access</string>
     <string name="explorer_grant_storage_subtitle">Required on Android TV to view internal files, USB drives, categories &amp; cleaner</string>
     <string name="explorer_grant_storage_action">Allow access</string>
@@ -127,4 +126,26 @@
     <string name="explorer_preview_more">More options</string>
     <string name="explorer_filter_all">All</string>
     <string name="explorer_folder_tools">Folder tools</string>
+    <string name="explorer_picker_closed">Folder picker closed. Choose Add folder to try again or enable direct storage access.</string>
+    <string name="explorer_picker_unavailable">Folder picker unavailable on this TV. Use direct storage access or browse the local network.</string>
+    <string name="explorer_folder_grant_failed">Access to the selected folder could not be saved.</string>
+    <string name="explorer_storage_settings_unavailable">Storage access settings are unavailable on this TV. Use an authorized folder or browse the local network.</string>
+    <string name="explorer_add_folder">Add folder</string>
+    <string name="explorer_search_choose_folder">Choose an authorized folder to filter its contents.</string>
+    <string name="explorer_search_locations">Locations: %1$s</string>
+    <string name="explorer_search_page">Page %1$d · %2$d results</string>
+    <string name="explorer_search_next">Next results</string>
+    <string name="explorer_search_limited">Some folders exceeded the search limits.</string>
+    <string name="explorer_search_unavailable">Unable to search this storage location.</string>
+    <string name="explorer_exporting">Preparing file for another app…</string>
+    <string name="explorer_export_failed">Unable to prepare this file.</string>
+    <string name="explorer_export_space">Insufficient temporary space to open this file.</string>
+    <string name="explorer_external_access_denied">Android denied access to open this file.</string>
+    <string name="explorer_installer_unavailable">The package installer is unavailable on this TV.</string>
+    <string name="explorer_viewer_unavailable">No compatible viewer is installed.</string>
+    <plurals name="explorer_search_unreadable">
+        <item quantity="one">%d folder could not be read.</item>
+        <item quantity="other">%d folders could not be read.</item>
+    </plurals>
+    <string name="explorer_apk_settings_unavailable">Unknown app sources settings are unavailable on this TV.</string>
 </resources>

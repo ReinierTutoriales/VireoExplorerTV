@@ -28,38 +28,23 @@ class Storage(private val resolver: ContentResolver) {
 
     internal fun toFile(uri: Uri): File = File(requireNotNull(uri.path) { "Missing file path" })
 
-    private fun fileFlags(file: File): Int {
-        var flags = 0
-        val parentWritable = file.parentFile?.canWrite() == true
-        if (file.isDirectory) {
-            if (file.canWrite()) flags = flags or D.Document.FLAG_DIR_SUPPORTS_CREATE
-            if (parentWritable) {
-                flags = flags or D.Document.FLAG_SUPPORTS_RENAME or
-                    D.Document.FLAG_SUPPORTS_DELETE or
-                    D.Document.FLAG_SUPPORTS_MOVE
-            }
-        } else {
-            val mime = inferFileMime(file.name)
-            if (mime.startsWith("image/") || mime.startsWith("video/")) {
-                flags = flags or D.Document.FLAG_SUPPORTS_THUMBNAIL
-            }
-            if (parentWritable) {
-                flags = flags or D.Document.FLAG_SUPPORTS_RENAME or
-                    D.Document.FLAG_SUPPORTS_DELETE or
-                    D.Document.FLAG_SUPPORTS_MOVE
-            }
-            if (file.canWrite()) {
-                flags = flags or D.Document.FLAG_SUPPORTS_WRITE
-            }
-        }
-        return flags
-    }
+    internal fun entryFromFile(file: File): Entry =
+        entryFromFile(file, file.parentFile?.canWrite() == true)
 
-    internal fun entryFromFile(file: File): Entry {
-        val isDir = file.isDirectory
-        val mime = if (isDir) D.Document.MIME_TYPE_DIR else inferFileMime(file.name)
-        val size = if (isDir) -1L else file.length()
-        return Entry(Uri.fromFile(file), file.name.ifEmpty { file.path }, mime, size, fileFlags(file))
+    private fun entryFromFile(file: File, parentWritable: Boolean, includeWriteFlags: Boolean = true): Entry {
+        val isDirectory = file.isDirectory
+        val mime = if (isDirectory) D.Document.MIME_TYPE_DIR else inferFileMime(file.name)
+        val size = if (isDirectory) -1L else file.length()
+        var flags = if (parentWritable) {
+            D.Document.FLAG_SUPPORTS_RENAME or D.Document.FLAG_SUPPORTS_DELETE or D.Document.FLAG_SUPPORTS_MOVE
+        } else 0
+        if (includeWriteFlags && file.canWrite()) {
+            flags = flags or if (isDirectory) D.Document.FLAG_DIR_SUPPORTS_CREATE else D.Document.FLAG_SUPPORTS_WRITE
+        }
+        if (mime.startsWith("image/") || mime.startsWith("video/")) {
+            flags = flags or D.Document.FLAG_SUPPORTS_THUMBNAIL
+        }
+        return Entry(Uri.fromFile(file), file.name.ifEmpty { file.path }, mime, size, flags)
     }
 
     private fun requireGrant(uri: Uri, write: Boolean = false) {
@@ -75,6 +60,22 @@ class Storage(private val resolver: ContentResolver) {
             it.uri.authority == uri.authority && D.getTreeDocumentId(it.uri) == treeId &&
                 it.isReadPermission && (!write || it.isWritePermission)
         }) { "Storage permission unavailable" }
+    }
+
+    internal suspend fun canCreateChildren(parent: Uri): Boolean = withContext(Dispatchers.IO) {
+        try {
+            requireGrant(parent, write = true)
+            if (isFileUri(parent)) {
+                val folder = toFile(parent)
+                return@withContext folder.isDirectory && folder.canWrite()
+            }
+            val cursor = resolver.query(parent, arrayOf(D.Document.COLUMN_FLAGS), null, null, null)
+            cursor?.use { it.moveToFirst() && (it.getInt(0) and D.Document.FLAG_DIR_SUPPORTS_CREATE != 0) } == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun root(tree: Uri): Uri = if (isFileUri(tree)) tree else D.buildDocumentUriUsingTree(tree, D.getTreeDocumentId(tree))
@@ -110,15 +111,20 @@ class Storage(private val resolver: ContentResolver) {
 
     suspend fun children(parent: Uri): List<Entry> = listChildren(parent, sorted = true)
 
-    private suspend fun listChildren(parent: Uri, sorted: Boolean): List<Entry> = withContext(Dispatchers.IO) {
+    private suspend fun listChildren(
+        parent: Uri,
+        sorted: Boolean,
+        includeWriteFlags: Boolean = true
+    ): List<Entry> = withContext(Dispatchers.IO) {
         requireGrant(parent)
         if (isFileUri(parent)) {
             val dir = toFile(parent)
             val list = dir.listFiles() ?: error("Cannot read folder")
+            val parentWritable = includeWriteFlags && dir.canWrite()
             return@withContext buildList(list.size) {
                 for (f in list) {
                     coroutineContext.ensureActive()
-                    add(entryFromFile(f))
+                    add(entryFromFile(f, parentWritable, includeWriteFlags))
                 }
             }.let { if (sorted) it.sortedWith(defaultEntryComparator) else it }
         }
@@ -195,60 +201,24 @@ class Storage(private val resolver: ContentResolver) {
         }
     }
 
-    internal suspend fun queryCategoryOrSearch(
-        root: Uri,
-        category: FileCategory?,
-        query: String,
-        maxResults: Int = 600
-    ): List<Entry> = withContext(Dispatchers.IO) {
-        requireGrant(root)
-        val trimmedQuery = query.trim()
-        val queue = ArrayDeque<Pair<Uri, Int>>()
-        val seen = HashSet<String>()
-        val results = ArrayList<Entry>()
-        queue.add(root to 0)
-        while (queue.isNotEmpty() && results.size < maxResults) {
-            coroutineContext.ensureActive()
-            val (folder, depth) = queue.removeFirst()
-            val key = if (isFileUri(folder)) {
-                runCatching { toFile(folder).canonicalPath }.getOrElse { folder.toString() }
-            } else folder.toString()
-            if (!seen.add(key) || seen.size > 1500) continue
-            val items = try {
-                listChildren(folder, sorted = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                continue
-            }
-            for (item in items) {
-                coroutineContext.ensureActive()
-                if (item.directory) {
-                    if (!item.name.startsWith('.') &&
-                        !item.name.equals("Android", ignoreCase = true) &&
-                        depth < 12 &&
-                        queue.size < 1500
-                    ) {
-                        queue.add(item.uri to depth + 1)
-                    }
-                    if (category == null && trimmedQuery.isNotEmpty() &&
-                        item.name.contains(trimmedQuery, ignoreCase = true)
-                    ) {
-                        results.add(item)
-                        if (results.size >= maxResults) break
-                    }
+    internal fun categorySearch(roots: List<Entry>, category: FileCategory?, query: String): SearchTraversal<Entry> =
+        SearchTraversal(
+            roots = roots,
+            identity = { item ->
+                if (isFileUri(item.uri)) {
+                    runCatching { toFile(item.uri).canonicalPath }.getOrElse { item.uri.toString() }
                 } else {
-                    val categoryMatch = category == null || category.matches(item)
-                    val queryMatch = trimmedQuery.isEmpty() || item.name.contains(trimmedQuery, ignoreCase = true)
-                    if (categoryMatch && queryMatch) {
-                        results.add(item)
-                        if (results.size >= maxResults) break
-                    }
+                    "${item.uri.authority}:${D.getDocumentId(item.uri)}"
                 }
-            }
-        }
-        results.sortedWith(defaultEntryComparator)
-    }
+            },
+            children = { listChildren(it.uri, sorted = false, includeWriteFlags = false) },
+            matches = { item ->
+                val queryMatch = query.isEmpty() || item.name.contains(query, ignoreCase = true)
+                queryMatch && if (item.directory) category == null && query.isNotEmpty()
+                else category == null || category.matches(item)
+            },
+            descend = { it.directory && !it.name.startsWith('.') && !it.name.equals("Android", ignoreCase = true) }
+        )
 
     suspend fun createZip(entry: Entry, parent: Uri, progress: (Long) -> Unit) = withContext(Dispatchers.IO) {
         requireGrant(entry.uri)

@@ -36,7 +36,7 @@ internal fun FolderEntry(
     val shape = VireoCardShape
     val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = shape)
     val selectedRestingBorder = Border(BorderStroke(1.dp, colors.primary), shape = shape)
-    val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = shape)
+    val focusBorder = Border(BorderStroke(3.dp, colors.primary), shape = shape)
     val size = if (!entry.directory && entry.size >= 0) {
         Formatter.formatFileSize(context, entry.size)
     } else null
@@ -67,7 +67,7 @@ internal fun FolderEntry(
                 focusedBorder = focusBorder,
                 focusedSelectedBorder = focusBorder
             ),
-            scale = SelectableSurfaceDefaults.scale(focusedScale = 1.02f, focusedSelectedScale = 1.02f)
+            scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f, focusedSelectedScale = 1.05f)
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Box(
@@ -161,7 +161,7 @@ internal fun FolderEntry(
                 focusedBorder = focusBorder,
                 focusedSelectedBorder = focusBorder
             ),
-            scale = ListItemDefaults.scale(focusedScale = 1.01f, focusedSelectedScale = 1.01f)
+            scale = ListItemDefaults.scale(focusedScale = 1.025f, focusedSelectedScale = 1.025f)
         )
     }
 }

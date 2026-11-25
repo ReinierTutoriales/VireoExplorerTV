@@ -29,7 +29,6 @@
     <string name="explorer_no_transfer">No hay transferencias en curso.</string>
     <string name="explorer_usb_unavailable">No se detectó almacenamiento USB. Conecta una unidad y vuelve a intentarlo.</string>
     <string name="explorer_no_category_files">No se encontraron archivos de esta categoría.</string>
-    <string name="explorer_folder_access">Activa el acceso al almacenamiento para ver todos los archivos internos y USB de tu TV.</string>
     <string name="explorer_grant_storage_title">Activar acceso a archivos de la TV</string>
     <string name="explorer_grant_storage_subtitle">Necesario en Android TV para abrir el almacenamiento interno, USB, categorías y limpiador</string>
     <string name="explorer_grant_storage_action">Permitir acceso</string>
@@ -129,4 +128,26 @@
     <string name="explorer_preview_more">Más opciones</string>
     <string name="explorer_filter_all">Todo</string>
     <string name="explorer_folder_tools">Herramientas de carpeta</string>
+    <string name="explorer_picker_closed">Se cerró el selector. Elige Añadir carpeta para volver a intentarlo o activa el acceso directo.</string>
+    <string name="explorer_picker_unavailable">El selector de carpetas no está disponible en este TV. Usa el acceso directo o explora la red local.</string>
+    <string name="explorer_folder_grant_failed">No se pudo guardar el acceso a la carpeta seleccionada.</string>
+    <string name="explorer_storage_settings_unavailable">Los ajustes de almacenamiento no están disponibles en este TV. Usa una carpeta autorizada o explora la red local.</string>
+    <string name="explorer_add_folder">Añadir carpeta</string>
+    <string name="explorer_search_choose_folder">Elige una carpeta autorizada para buscar en su contenido.</string>
+    <string name="explorer_search_locations">Ubicaciones: %1$s</string>
+    <string name="explorer_search_page">Página %1$d · %2$d resultados</string>
+    <string name="explorer_search_next">Siguientes resultados</string>
+    <string name="explorer_search_limited">Algunas carpetas superaron los límites de búsqueda.</string>
+    <string name="explorer_search_unavailable">No se pudo buscar en esta ubicación.</string>
+    <string name="explorer_exporting">Preparando el archivo para abrirlo en otra aplicación…</string>
+    <string name="explorer_export_failed">No se pudo preparar este archivo.</string>
+    <string name="explorer_export_space">No hay suficiente espacio temporal para abrir este archivo.</string>
+    <string name="explorer_external_access_denied">Android denegó el acceso para abrir este archivo.</string>
+    <string name="explorer_installer_unavailable">El instalador de aplicaciones no está disponible en este TV.</string>
+    <string name="explorer_viewer_unavailable">No hay un visor compatible instalado.</string>
+    <plurals name="explorer_search_unreadable">
+        <item quantity="one">No se pudo leer %d carpeta.</item>
+        <item quantity="other">No se pudieron leer %d carpetas.</item>
+    </plurals>
+    <string name="explorer_apk_settings_unavailable">Los ajustes para instalar aplicaciones desconocidas no están disponibles en este TV.</string>
 </resources>

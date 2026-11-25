@@ -32,6 +32,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +43,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,19 +95,25 @@ class MainActivity : ComponentActivity() {
         var createZipItemDialog by remember { mutableStateOf<Entry?>(null) }
         var extractZipItemDialog by remember { mutableStateOf<Entry?>(null) }
         var installApkConsentDialog by remember { mutableStateOf<Entry?>(null) }
+        var apkAwaitingSettings by remember { mutableStateOf<Entry?>(null) }
 
-        val legacyPermissionLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions()
-        ) {
+        fun finishDirectStorageRequest() {
             directStorageGranted = hasDirectStorageAccess(this@MainActivity)
             directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
+            val action = pendingActionAfterGrant
+            pendingActionAfterGrant = null
             if (directStorageGranted) {
                 folderPickerNotice = null
-                val action = pendingActionAfterGrant
-                pendingActionAfterGrant = null
                 action?.invoke()
             }
         }
+
+        val storageSettingsLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { finishDirectStorageRequest() }
+        val legacyPermissionLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { finishDirectStorageRequest() }
 
         fun requestDirectStoragePermission(onGranted: (() -> Unit)? = null) {
             if (hasDirectStorageAccess(this@MainActivity)) {
@@ -114,20 +122,23 @@ class MainActivity : ComponentActivity() {
                 onGranted?.invoke()
                 return
             }
+            model.error = null
+            folderPickerNotice = null
             pendingActionAfterGrant = onGranted
             if (Build.VERSION.SDK_INT >= 30) {
                 try {
-                    startActivity(
+                    storageSettingsLauncher.launch(
                         Intent(
                             Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                             Uri.parse("package:$packageName")
                         )
                     )
-                } catch (_: Exception) {
+                } catch (_: RuntimeException) {
                     try {
-                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                    } catch (_: Exception) {
-                        model.error = "Storage access settings unavailable on this TV"
+                        storageSettingsLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    } catch (_: RuntimeException) {
+                        pendingActionAfterGrant = null
+                        folderPickerNotice = getString(R.string.explorer_storage_settings_unavailable)
                     }
                 }
             } else {
@@ -140,46 +151,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val uri = result.data?.data
-            if (result.resultCode != android.app.Activity.RESULT_OK || uri == null) {
-                if (uri == null) {
-                    if (!directStorageGranted) {
-                        requestDirectStoragePermission()
-                    } else {
-                        folderPickerNotice = getString(R.string.explorer_folder_access)
-                    }
-                }
-                return@rememberLauncherForActivityResult
-            }
-            try {
-                folderPickerNotice = null
-                val granted = (result.data?.flags ?: 0) and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                check(granted and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) { "Read access not granted" }
-                if (granted and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) {
-                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                } else contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                model.roots = contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri }
-                model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri))
-            } catch (e: Exception) { model.error = e.localizedMessage ?: "Permission unavailable" }
-        }
-
         var writableRoots by remember {
             mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet())
         }
 
-        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-            directStorageGranted = hasDirectStorageAccess(this@MainActivity)
-            directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
-            val grants = contentResolver.persistedUriPermissions
-            model.roots = grants.filter { it.isReadPermission }.map { it.uri }
-            writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
-            if (directStorageGranted) {
-                folderPickerNotice = null
-                val pendingAction = pendingActionAfterGrant
-                pendingActionAfterGrant = null
-                pendingAction?.invoke()
-            }
+        fun refreshFolderGrants() {
+            refreshFolderGrants()
             if (model.path.isNotEmpty()) {
                 val rootUri = model.path.first().first
                 val valid = if (rootUri.scheme == "file") {
@@ -195,10 +172,6 @@ class MainActivity : ComponentActivity() {
                     model.error = "Storage access revoked"
                 }
             }
-        }
-
-        LaunchedEffect(model.roots) {
-            writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()
         }
 
         val volumeFlow = remember { observeVolumes(applicationContext) }
@@ -254,9 +227,9 @@ class MainActivity : ComponentActivity() {
                     )
                 )
             } catch (_: android.content.ActivityNotFoundException) {
-                requestDirectStoragePermission()
+                folderPickerNotice = getString(R.string.explorer_picker_unavailable)
             } catch (_: SecurityException) {
-                requestDirectStoragePermission()
+                folderPickerNotice = getString(R.string.explorer_picker_unavailable)
             }
         }
 
@@ -303,16 +276,16 @@ class MainActivity : ComponentActivity() {
         }
 
         val rootUriInPath = model.path.firstOrNull()?.first
-        val parentWritable by produceState(false, parent, directStorageWritable, model.revision) {
-            value = if (parent?.scheme == "file" && directStorageWritable) {
-                withContext(Dispatchers.IO) { File(parent.path.orEmpty()).canWrite() }
-            } else false
-        }
-        val writable = when {
+        val writeGrant = when {
             rootUriInPath == null -> false
-            rootUriInPath.scheme == "file" -> parentWritable
-            else -> model.roots.any { it in writableRoots && storage.root(it) == rootUriInPath }
+            rootUriInPath.scheme == "file" -> directStorageWritable
+            else -> writableRoots.any { storage.root(it) == rootUriInPath }
         }
+        val canCreateChildren by produceState(false, parent, writeGrant, model.revision) {
+            value = false
+            value = parent != null && writeGrant && storage.canCreateChildren(parent)
+        }
+        val writable = writeGrant && (rootUriInPath?.scheme != "file" || canCreateChildren)
 
         LaunchedEffect(parent, model.revision) { model.load(parent) }
         val activeParentEntries = if (parent != null) model.entriesFor(parent) else emptyList()
@@ -366,28 +339,55 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        fun launchApkInstall(entry: Entry) {
-            if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+        var externalOpenJob by remember { mutableStateOf<Job?>(null) }
+        val openingExternalFile = externalOpenJob != null
+
+        fun openExternally(entry: Entry, apk: Boolean) {
+            if (externalOpenJob?.isActive == true) return
+            if (apk && Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
                 installApkConsentDialog = entry
                 return
             }
-            if (entry.uri.scheme == "file") {
-                model.error = "Open APK via system package installer settings"
-                return
-            }
-            try {
-                val installIntent = Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(entry.uri, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(installIntent)
-            } catch (_: android.content.ActivityNotFoundException) {
-                model.error = "Package installer unavailable on this TV"
-            } catch (_: SecurityException) {
-                model.error = "APK installation permission denied"
+            externalOpenJob = settingsScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                var prepared: ExternalFile? = null
+                var launched = false
+                try {
+                    val directRoots = volumes.filter { it.isMounted }.mapNotNull { it.directory }
+                    val file = prepareExternalFile(this@MainActivity, entry, directRoots)
+                    prepared = file
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(file.uri, if (apk) "application/vnd.android.package-archive" else
+                                mediaMime(entry.name, entry.mime))
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    )
+                    launched = true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: android.content.ActivityNotFoundException) {
+                    model.error = getString(if (apk) R.string.explorer_installer_unavailable else R.string.explorer_viewer_unavailable)
+                } catch (_: SecurityException) {
+                    model.error = getString(R.string.explorer_external_access_denied)
+                } catch (e: Exception) {
+                    model.error = e.localizedMessage ?: getString(R.string.explorer_export_failed)
+                } finally {
+                    if (!launched) withContext(kotlinx.coroutines.NonCancellable) { prepared?.discard() }
+                    externalOpenJob = null
+                }
+            }.also { it.start() }
+        }
+
+        val apkSettingsLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) {
+            val entry = apkAwaitingSettings
+            apkAwaitingSettings = null
+            if (entry != null && Build.VERSION.SDK_INT >= 26 && packageManager.canRequestPackageInstalls()) {
+                openExternally(entry, apk = true)
             }
         }
 
-        fun openEntry(entry: Entry) {
+        fun openEntry(entry: Entry, searchParents: List<Entry>? = null) {
             val mime = mediaMime(entry.name, entry.mime)
             val isApk = FileCategory.APK.matches(entry) && !entry.directory
             val internalViewer = mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/")
@@ -395,25 +395,17 @@ class MainActivity : ComponentActivity() {
             model.selected = null
             model.error = null
             when {
-                entry.directory -> model.path = model.path + (entry.uri to entry.name)
-                internalViewer -> model.viewing = entry
-                isApk -> launchApkInstall(entry)
-                else -> try {
-                    startActivity(
-                        Intent(Intent.ACTION_VIEW)
-                            .setDataAndType(entry.uri, entry.mime)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    )
-                } catch (_: android.content.ActivityNotFoundException) {
-                    model.error = "No compatible viewer installed"
-                } catch (_: Exception) {
-                    model.error = "No built-in viewer for this file type"
+                entry.directory -> {
+                    val base = searchParents?.map { it.uri to it.name } ?: model.path
+                    model.path = base + (entry.uri to entry.name)
                 }
+                internalViewer -> model.viewing = entry
+                else -> openExternally(entry, isApk)
             }
         }
 
         fun navigate(destination: ExplorerPage) {
-            if (model.mutating) return
+            if (model.mutating || openingExternalFile) return
             category = null
             homeSearch = ""
             usbOnly = false
@@ -452,9 +444,13 @@ class MainActivity : ComponentActivity() {
                 onConfirm = {
                     if (Build.VERSION.SDK_INT >= 26) {
                         try {
-                            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-                        } catch (_: Exception) {
-                            model.error = "Unknown app sources settings unavailable on this TV"
+                            apkAwaitingSettings = apkCandidate
+                            apkSettingsLauncher.launch(
+                                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+                            )
+                        } catch (_: RuntimeException) {
+                            apkAwaitingSettings = null
+                            model.error = getString(R.string.explorer_apk_settings_unavailable)
                         }
                     }
                 },
@@ -463,10 +459,12 @@ class MainActivity : ComponentActivity() {
         }
 
         val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = VireoCardShape)
-        val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
+        val focusBorder = Border(BorderStroke(3.dp, colors.primary), shape = VireoCardShape)
 
         if (parent == null) {
-            BackHandler(page != ExplorerPage.HOME && !model.mutating) { navigate(ExplorerPage.HOME) }
+            BackHandler(openingExternalFile || (page != ExplorerPage.HOME && !model.mutating)) {
+                if (openingExternalFile) externalOpenJob?.cancel() else navigate(ExplorerPage.HOME)
+            }
             val usbUnavailable = stringResource(R.string.explorer_usb_unavailable)
             val categoryLabel = category?.let { stringResource(it.label) }
             val visibleVolumes = volumes.filter { !usbOnly || it.removable }
@@ -476,44 +474,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            var categoryResults by remember { mutableStateOf<List<Entry>>(emptyList()) }
-            var categoryLoading by remember { mutableStateOf(false) }
-            val activeDirectRoot = remember(directStorageGranted, volumes) {
-                if (directStorageGranted) {
-                    (volumes.firstOrNull { !it.removable && it.directUri != null }?.directory ?: primaryDirectStorageDir())
-                        ?.let { Uri.fromFile(it) }
-                } else null
-            }
-
-            LaunchedEffect(page, category, homeSearch, activeDirectRoot, model.roots, model.revision) {
-                if (page == ExplorerPage.FILES && (category != null || homeSearch.isNotEmpty())) {
-                    val scanTarget = activeDirectRoot ?: model.roots.firstOrNull()?.let { storage.root(it) }
-                    if (scanTarget != null) {
-                        categoryResults = emptyList()
-                        categoryLoading = true
-                        try {
-                            val raw = storage.queryCategoryOrSearch(scanTarget, category, homeSearch)
-                            categoryResults = raw
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            categoryResults = emptyList()
-                            model.error = "Unable to search this storage location"
-                        } finally {
-                            categoryLoading = false
-                        }
-                    } else {
-                        categoryResults = emptyList()
-                    }
-                } else {
-                    categoryResults = emptyList()
-                    categoryLoading = false
-                }
-            }
+            val searching = page == ExplorerPage.FILES && (category != null || homeSearch.isNotEmpty())
+            val search = if (searching) {
+                rememberExplorerSearch(storage, category, homeSearch, volumes, directStorageGranted, model.roots, model.revision)
+            } else null
 
             ExplorerHome(
                 page = page,
-                notice = model.error ?: folderPickerNotice,
+                notice = when {
+                    openingExternalFile -> stringResource(R.string.explorer_exporting)
+                    else -> model.error ?: folderPickerNotice
+                },
                 onPage = ::navigate,
                 onSearch = { showHomeSearchDialog = true },
                 onInternal = { openInternalStorageDirectly() },
@@ -532,19 +503,17 @@ class MainActivity : ComponentActivity() {
                 },
                 onFolders = { navigate(ExplorerPage.FILES) },
                 onCategory = { selectedCategory ->
-                    if (!directStorageGranted && model.roots.isEmpty()) {
-                        requestDirectStoragePermission {
-                            navigate(ExplorerPage.FILES)
-                            category = selectedCategory
-                        }
-                    } else {
-                        navigate(ExplorerPage.FILES)
-                        category = selectedCategory
-                    }
+                    navigate(ExplorerPage.FILES)
+                    category = selectedCategory
                 }
             ) {
                 when (page) {
                     ExplorerPage.FILES -> {
+                        item(key = "add-folder") {
+                            OutlinedButton(onClick = { pickFolder() }, enabled = !openingExternalFile) {
+                                Text(stringResource(R.string.explorer_add_folder))
+                            }
+                        }
                         if (!directStorageGranted) {
                             item {
                                 Card(
@@ -558,7 +527,7 @@ class MainActivity : ComponentActivity() {
                                         focusedContentColor = colors.onPrimaryContainer
                                     ),
                                     border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
-                                    scale = CardDefaults.scale(focusedScale = 1.01f)
+                                    scale = CardDefaults.scale(focusedScale = 1.05f)
                                 ) {
                                     Row(
                                         Modifier.fillMaxWidth().padding(20.dp),
@@ -610,33 +579,20 @@ class MainActivity : ComponentActivity() {
                                             homeSearch = ""
                                         }
                                     }
-                                    Text(
-                                        if (categoryLoading) stringResource(R.string.explorer_reading_storage)
-                                        else "${categoryResults.size} items",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = colors.onSurfaceVariant
-                                    )
                                 }
                             }
-                            if (!categoryLoading && categoryResults.isEmpty() && (directStorageGranted || model.roots.isNotEmpty())) {
-                                item {
-                                    Text(
-                                        if (homeSearch.isNotEmpty()) stringResource(R.string.explorer_no_search_results)
-                                        else stringResource(R.string.explorer_no_category_files),
-                                        color = colors.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            items(categoryResults, key = { "cat:" + it.uri.toString() }) { entry ->
-                                FolderEntry(
-                                    entry = entry,
+                            if (search != null) {
+                                explorerSearchResults(
+                                    search = search,
+                                    searchingByName = homeSearch.isNotEmpty(),
                                     revision = model.revision,
-                                    grid = false,
-                                    selected = false,
-                                    enabled = true,
-                                    onClick = { openEntry(entry) },
-                                    onLongClick = { model.selected = entry },
-                                    modifier = Modifier.fillMaxWidth()
+                                    enabled = !openingExternalFile,
+                                    onOpen = { openEntry(it.item, it.parents) },
+                                    onShowFolder = { hit ->
+                                        val path = hit.parents.map { it.uri to it.name }
+                                        path.lastOrNull()?.first?.let { returnEntries[it] = hit.item.uri }
+                                        model.path = path
+                                    }
                                 )
                             }
                         } else {
@@ -947,7 +903,6 @@ class MainActivity : ComponentActivity() {
                     returnEntries.remove(parent)
                     model.mutate {
                         storage.delete(deleting)
-                        primaryFocus.requestFocus()
                     }
                 },
                 onDismiss = { deleteItemDialog = null }
@@ -983,6 +938,7 @@ class MainActivity : ComponentActivity() {
         fun backFromFolder() {
             if (model.mutating) return
             when {
+                openingExternalFile -> externalOpenJob?.cancel()
                 actionsOpen -> model.selected = null
                 model.multi -> { model.multi = false; model.marked = emptySet() }
                 else -> model.path = model.path.dropLast(1)
@@ -994,9 +950,27 @@ class MainActivity : ComponentActivity() {
         val item = model.selected
         if (item != null) {
             val actionFocus = remember { FocusRequester() }
-            LaunchedEffect(item.uri) { actionFocus.requestFocus() }
             androidx.compose.ui.window.Dialog(onDismissRequest = { model.selected = null }) {
+                LaunchedEffect(item.uri) { actionFocus.requestFocus() }
+                var confirmedKeyDown by remember { mutableStateOf(false) }
                 Surface(
+                    modifier = Modifier.onPreviewKeyEvent { event ->
+                        val key = event.nativeKeyEvent
+                        when (key.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER, android.view.KeyEvent.KEYCODE_ENTER,
+                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER, android.view.KeyEvent.KEYCODE_BUTTON_A -> {
+                                if (key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) {
+                                    confirmedKeyDown = true
+                                    false
+                                } else if (key.action == android.view.KeyEvent.ACTION_UP) {
+                                    val suppress = !confirmedKeyDown
+                                    confirmedKeyDown = false
+                                    suppress
+                                } else !confirmedKeyDown
+                            }
+                            else -> false
+                        }
+                    },
                     shape = VireoCardShape,
                     colors = SurfaceDefaults.colors(
                         containerColor = colors.surface,
@@ -1031,10 +1005,10 @@ class MainActivity : ComponentActivity() {
                             if (writable && item.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0) {
                                 Button(enabled = !model.mutating, onClick = { model.selected = null; deleteItemDialog = item }) { Text("Delete") }
                             }
-                            if (writable) {
+                            if (canCreateChildren) {
                                 Button(enabled = !model.mutating, onClick = { model.selected = null; createZipItemDialog = item }) { Text("Create ZIP") }
                             }
-                            if (writable && !item.directory && item.name.endsWith(".zip", true)) {
+                            if (canCreateChildren && !item.directory && item.name.endsWith(".zip", true)) {
                                 Button(enabled = !model.mutating, onClick = { model.selected = null; extractZipItemDialog = item }) { Text("Extract ZIP") }
                             }
                             Button(enabled = !model.mutating, onClick = { model.clipboard = listOf(item) to false; model.selected = null }) { Text("Copy") }
@@ -1054,7 +1028,7 @@ class MainActivity : ComponentActivity() {
         var focusedUri by remember(parent) { mutableStateOf<Uri?>(null) }
         var showFolderTools by remember(parent) { mutableStateOf(false) }
         val focusedEntry = visible.firstOrNull { it.uri == focusedUri } ?: visible.firstOrNull()
-        val detailsReady = !model.mutating && !model.busy && !listingPending && !model.multi
+        val detailsReady = !model.mutating && !model.busy && !listingPending && !model.multi && !openingExternalFile
         val moveSupported = focusedEntry?.let {
             writable && it.flags and (if (it.directory) DocumentsContract.Document.FLAG_SUPPORTS_MOVE
                 else DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0
@@ -1074,7 +1048,7 @@ class MainActivity : ComponentActivity() {
                     revision = model.revision,
                     enabled = detailsReady,
                     canMove = moveSupported,
-                    onOpen = { focusedEntry?.let(::openEntry) },
+                    onOpen = { focusedEntry?.let { openEntry(it) } },
                     onCopy = { focusedEntry?.let { model.clipboard = listOf(it) to false } },
                     onMove = {
                         focusedEntry?.let {
@@ -1160,7 +1134,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text(stringResource(if (gridView) R.string.explorer_grid else R.string.explorer_list))
                     }
-                    if (writable) {
+                    if (canCreateChildren) {
                         ExplorerOption(
                             selected = false,
                             enabled = !model.mutating && !model.busy,
@@ -1244,6 +1218,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                if (openingExternalFile) Text(stringResource(R.string.explorer_exporting))
                 model.error?.let { Text(it, color = colors.error) }
                 if (model.busy) Text(stringResource(R.string.explorer_reading_storage), color = colors.onSurfaceVariant)
                 if (model.mutating) Text(stringResource(R.string.explorer_working), color = colors.primary)
@@ -1260,7 +1235,7 @@ class MainActivity : ComponentActivity() {
                             color = colors.primary,
                             style = MaterialTheme.typography.titleSmall
                         )
-                        Button(enabled = writable && !model.mutating && !model.busy, onClick = { model.paste(parent) }) { Text("Paste here") }
+                        Button(enabled = canCreateChildren && !model.mutating && !model.busy, onClick = { model.paste(parent) }) { Text("Paste here") }
                         ExplorerOption(
                             selected = false,
                             enabled = !model.mutating,
@@ -1315,7 +1290,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                val itemReady = !model.mutating && !model.busy && !listingPending
+                val itemReady = !model.mutating && !model.busy && !listingPending && !openingExternalFile
                 val select: (Entry) -> Unit = { entry ->
                     if (itemReady) {
                         if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri

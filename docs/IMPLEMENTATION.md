@@ -206,3 +206,11 @@ The folder screen now implements a left destination rail, a central file workspa
 Grid tiles have full-width thumbnails and larger folder symbols. Preview requests use a distinct cache key, a bounded image size, and a cancellable delay before decoding during rapid focus traversal. New preferences default to grid while an explicitly saved view preference is retained. The UI uses real file names, MIME types and sizes. It does not fabricate durations, resolutions, or folder counts. Native decoding/provider thumbnail support determines whether an image or type icon is shown.
 
 This is repository implementation, not the generated visual concept. Pixel layout and D-pad behavior for this version still require device validation. No new APK was packaged for this change.
+
+## Storage permissions, search and D-pad corrections
+
+Explicit folder selection returns to Files on cancellation. Direct storage settings use system capability checks and an activity result to discard finished requests. SAF search hits retain their granted ancestry. Creation, paste and archive actions check that the destination supports creating children. External apps receive temporary read-only content URIs for APKs and documents through AndroidX FileProvider (Core 1.19.1) or the existing SAF grant.
+
+Search scans mounted local volumes and persisted folder grants. It resumes the same traversal on the next page and reports unreadable folders and hard limits. Direct-path listings reuse the parent writability check for a directory. Search skips per-entry write checks because results cannot mutate files directly. File list and grid focus have stronger outlines, and the file action dialog suppresses repeat events and an unpaired release from the opening key.
+
+Platform behavior reviewed on 2026-11-25 against Android SAF, all-files access, FileProvider and TV Material references. Verified the existing stable dependency versions against published Maven metadata. No measured runtime improvement is claimed.
