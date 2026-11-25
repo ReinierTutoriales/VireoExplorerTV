@@ -6,11 +6,14 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.Settings
+import android.text.format.Formatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,9 +24,9 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -39,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val model by lazy { ViewModelProvider(this)[ExplorerModel::class.java] }
@@ -50,6 +54,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable private fun Explorer() {
         val storage = model.storage
+        val colors = MaterialTheme.colorScheme
         val preferences = remember { ExplorerPreferences(applicationContext) }
         val settings by preferences.settings.collectAsStateWithLifecycle(initialValue = ExplorerSettings())
         val gridView = settings.grid
@@ -73,6 +78,9 @@ class MainActivity : ComponentActivity() {
         var homeSearch by rememberSaveable { mutableStateOf("") }
         var usbOnly by rememberSaveable { mutableStateOf(false) }
         var folderPickerNotice by remember { mutableStateOf<String?>(null) }
+        var directStorageGranted by remember { mutableStateOf(hasDirectStorageAccess(this@MainActivity)) }
+        var directStorageWritable by remember { mutableStateOf(hasDirectStorageWriteAccess(this@MainActivity)) }
+        var pendingActionAfterGrant by remember { mutableStateOf<(() -> Unit)?>(null) }
 
         var showHomeSearchDialog by remember { mutableStateOf(false) }
         var showFolderSearchDialog by remember { mutableStateOf(false) }
@@ -83,11 +91,61 @@ class MainActivity : ComponentActivity() {
         var extractZipItemDialog by remember { mutableStateOf<Entry?>(null) }
         var installApkConsentDialog by remember { mutableStateOf<Entry?>(null) }
 
+        val legacyPermissionLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) {
+            directStorageGranted = hasDirectStorageAccess(this@MainActivity)
+            directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
+            if (directStorageGranted) {
+                folderPickerNotice = null
+                val action = pendingActionAfterGrant
+                pendingActionAfterGrant = null
+                action?.invoke()
+            }
+        }
+
+        fun requestDirectStoragePermission(onGranted: (() -> Unit)? = null) {
+            if (hasDirectStorageAccess(this@MainActivity)) {
+                directStorageGranted = true
+                directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
+                onGranted?.invoke()
+                return
+            }
+            pendingActionAfterGrant = onGranted
+            if (Build.VERSION.SDK_INT >= 30) {
+                try {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                    )
+                } catch (_: Exception) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    } catch (_: Exception) {
+                        model.error = "Storage access settings unavailable on this TV"
+                    }
+                }
+            } else {
+                legacyPermissionLauncher.launch(
+                    arrayOf(
+                        android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    )
+                )
+            }
+        }
+
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val uri = result.data?.data
             if (result.resultCode != android.app.Activity.RESULT_OK || uri == null) {
                 if (uri == null) {
-                    folderPickerNotice = "No folder authorized. If your TV lacks a folder picker, use SMB network."
+                    if (!directStorageGranted) {
+                        requestDirectStoragePermission()
+                    } else {
+                        folderPickerNotice = getString(R.string.explorer_folder_access)
+                    }
                 }
                 return@rememberLauncherForActivityResult
             }
@@ -102,66 +160,173 @@ class MainActivity : ComponentActivity() {
                 model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri))
             } catch (e: Exception) { model.error = e.localizedMessage ?: "Permission unavailable" }
         }
-        var writableRoots by remember { mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()) }
+
+        var writableRoots by remember {
+            mutableStateOf(contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet())
+        }
+
         LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+            directStorageGranted = hasDirectStorageAccess(this@MainActivity)
+            directStorageWritable = hasDirectStorageWriteAccess(this@MainActivity)
             val grants = contentResolver.persistedUriPermissions
             model.roots = grants.filter { it.isReadPermission }.map { it.uri }
             writableRoots = grants.filter { it.isWritePermission }.map { it.uri }.toSet()
-            if (model.path.isNotEmpty() && model.roots.none { storage.root(it) == model.path.first().first }) {
-                model.path = emptyList()
-                model.selected = null
-                model.viewing = null
-                model.scanOpen = false
-                model.error = "Storage access revoked"
+            if (directStorageGranted) {
+                folderPickerNotice = null
+                val pendingAction = pendingActionAfterGrant
+                pendingActionAfterGrant = null
+                pendingAction?.invoke()
+            }
+            if (model.path.isNotEmpty()) {
+                val rootUri = model.path.first().first
+                val valid = if (rootUri.scheme == "file") {
+                    directStorageGranted && File(rootUri.path.orEmpty()).exists()
+                } else {
+                    model.roots.any { storage.root(it) == rootUri }
+                }
+                if (!valid) {
+                    model.path = emptyList()
+                    model.selected = null
+                    model.viewing = null
+                    model.scanOpen = false
+                    model.error = "Storage access revoked"
+                }
             }
         }
+
         LaunchedEffect(model.roots) {
             writableRoots = contentResolver.persistedUriPermissions.filter { it.isWritePermission }.map { it.uri }.toSet()
         }
+
         val volumeFlow = remember { observeVolumes(applicationContext) }
         val volumes by volumeFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+
+        fun openDirectDirectory(dir: File, label: String) {
+            folderPickerNotice = null
+            model.error = null
+            model.path = listOf(Uri.fromFile(dir) to label)
+        }
+
+        fun openInternalStorageDirectly() {
+            if (directStorageGranted) {
+                val primaryVol = volumes.firstOrNull { !it.removable && it.directUri != null }
+                val dir = primaryVol?.directory ?: primaryDirectStorageDir()
+                if (dir != null && dir.exists()) {
+                    openDirectDirectory(dir, getString(R.string.explorer_internal))
+                    return
+                }
+            }
+            val safRoot = model.roots.firstOrNull { uri ->
+                uri.authority == "com.android.externalstorage.documents" &&
+                    DocumentsContract.getTreeDocumentId(uri).substringBefore(':') == "primary"
+            }
+            if (safRoot != null) {
+                model.path = listOf(storage.root(safRoot) to getString(R.string.explorer_internal))
+                return
+            }
+            requestDirectStoragePermission {
+                val dir = primaryDirectStorageDir()
+                if (dir != null && dir.exists()) {
+                    openDirectDirectory(dir, getString(R.string.explorer_internal))
+                }
+            }
+        }
+
         fun pickFolder(volume: VolumeInfo? = null) {
             folderPickerNotice = null
             model.error = null
+            if (volume != null && directStorageGranted && volume.directory != null && volume.isMounted) {
+                openDirectDirectory(volume.directory, volume.label)
+                return
+            }
             try {
                 val intent = if (volume != null && Build.VERSION.SDK_INT >= 29) {
                     volume.volume.createOpenDocumentTreeIntent()
                 } else Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                picker.launch(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION))
+                picker.launch(
+                    intent.addFlags(
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                    )
+                )
             } catch (_: android.content.ActivityNotFoundException) {
-                folderPickerNotice = "Folder picker unavailable on this TV. Use SMB network."
+                requestDirectStoragePermission()
             } catch (_: SecurityException) {
-                model.error = "Folder picker access denied"
+                requestDirectStoragePermission()
             }
         }
-        fun openRoot(uri: Uri) {
-            model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri))
+
+        fun openRoot(uri: Uri, customLabel: String? = null) {
+            if (uri.scheme == "file") {
+                val file = File(uri.path.orEmpty())
+                model.path = listOf(uri to (customLabel ?: file.name.ifEmpty { getString(R.string.explorer_internal) }))
+            } else {
+                model.path = listOf(storage.root(uri) to (customLabel ?: DocumentsContract.getTreeDocumentId(uri)))
+            }
         }
+
         val parent = model.path.lastOrNull()?.first
         LaunchedEffect(parent) { if (parent != null) updateSettings { preferences.recordFolder(parent.toString()) } }
+
         fun openSavedFolder(value: String) {
             try {
                 val uri = Uri.parse(value)
-                val root = model.roots.map { storage.root(it) }.firstOrNull { it.authority == uri.authority && DocumentsContract.getTreeDocumentId(it) == DocumentsContract.getTreeDocumentId(uri) }
+                if (uri.scheme == "file") {
+                    if (!directStorageGranted) {
+                        requestDirectStoragePermission { openSavedFolder(value) }
+                        return
+                    }
+                    val targetFile = File(uri.path ?: return)
+                    if (!targetFile.exists()) { model.error = "Saved folder unavailable"; return }
+                    val rootDir = primaryDirectStorageDir()
+                    model.path = if (rootDir != null && targetFile.canonicalPath.startsWith(rootDir.canonicalPath) && targetFile.canonicalPath != rootDir.canonicalPath) {
+                        listOf(
+                            Uri.fromFile(rootDir) to getString(R.string.explorer_internal),
+                            Uri.fromFile(targetFile) to targetFile.name
+                        )
+                    } else {
+                        listOf(Uri.fromFile(targetFile) to targetFile.name.ifEmpty { getString(R.string.explorer_internal) })
+                    }
+                    return
+                }
+                val root = model.roots.map { storage.root(it) }.firstOrNull {
+                    it.authority == uri.authority && DocumentsContract.getTreeDocumentId(it) == DocumentsContract.getTreeDocumentId(uri)
+                }
                 if (root == null) { model.error = "Folder access revoked"; return }
-                model.path = if (root == uri) listOf(root to DocumentsContract.getDocumentId(root)) else listOf(root to DocumentsContract.getDocumentId(root), uri to DocumentsContract.getDocumentId(uri))
+                model.path = if (root == uri) listOf(root to DocumentsContract.getDocumentId(root))
+                else listOf(root to DocumentsContract.getDocumentId(root), uri to DocumentsContract.getDocumentId(uri))
             } catch (_: Exception) { model.error = "Saved folder unavailable" }
         }
-        val writable = model.roots.any { it in writableRoots && storage.root(it) == model.path.firstOrNull()?.first }
+
+        val rootUriInPath = model.path.firstOrNull()?.first
+        val writable = when {
+            rootUriInPath == null -> false
+            rootUriInPath.scheme == "file" -> directStorageWritable && (parent?.path?.let { File(it).canWrite() } ?: false)
+            else -> model.roots.any { it in writableRoots && storage.root(it) == rootUriInPath }
+        }
+
         LaunchedEffect(parent, model.revision) { model.load(parent) }
         val activeParentEntries = if (parent != null) model.entriesFor(parent) else emptyList()
         LaunchedEffect(parent, activeParentEntries, model.search, category, homeSearch, sortIndex) {
             model.syncListing(parent, category, homeSearch, sortIndex)
         }
+
         var cleanupRoot by remember { mutableStateOf<Uri?>(null) }
         val listState = rememberLazyListState()
         val gridState = rememberLazyGridState()
         val returnEntries = remember { mutableMapOf<Uri, Uri>() }
         val selectedCleanupRoot = cleanupRoot
-        if (model.appsOpen && selectedCleanupRoot != null && selectedCleanupRoot in model.roots) {
-            StorageAnalysis(storage, storage.root(selectedCleanupRoot), selectedCleanupRoot in writableRoots, onClose = { cleanupRoot = null })
-            return
+
+        if (model.appsOpen && selectedCleanupRoot != null) {
+            val isFileCleanup = selectedCleanupRoot.scheme == "file"
+            val canAnalyze = if (isFileCleanup) directStorageGranted else selectedCleanupRoot in model.roots
+            if (canAnalyze) {
+                val targetUri = if (isFileCleanup) selectedCleanupRoot else storage.root(selectedCleanupRoot)
+                val canWriteCleanup = if (isFileCleanup) directStorageWritable else selectedCleanupRoot in writableRoots
+                StorageAnalysis(storage, targetUri, canWriteCleanup, onClose = { cleanupRoot = null })
+                return
+            }
         }
         if (model.scanOpen && parent != null) {
             StorageAnalysis(storage, parent, writable, onClose = { model.scanOpen = false })
@@ -172,10 +337,16 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (model.appsOpen) {
-            AppManager(onClose = { cleanupRoot = null; model.appsOpen = false }, onAnalyze = { cleanupRoot = it })
+            AppManager(
+                onClose = { cleanupRoot = null; model.appsOpen = false },
+                onAnalyze = { cleanupRoot = it },
+                onRequestStorageAccess = { requestDirectStoragePermission() }
+            )
             return
         }
-        val video = model.viewing?.let { it.copy(mime = mediaMime(it.name, it.mime)) }?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
+
+        val video = model.viewing?.let { it.copy(mime = mediaMime(it.name, it.mime)) }
+            ?.takeIf { it.mime.startsWith("video/") || it.mime.startsWith("audio/") }
         if (video != null) {
             MediaViewer(video, sidecars = activeParentEntries, onClose = { model.viewing = null })
             return
@@ -190,6 +361,10 @@ class MainActivity : ComponentActivity() {
         fun launchApkInstall(entry: Entry) {
             if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
                 installApkConsentDialog = entry
+                return
+            }
+            if (entry.uri.scheme == "file") {
+                model.error = "Open APK via system package installer settings"
                 return
             }
             try {
@@ -216,15 +391,19 @@ class MainActivity : ComponentActivity() {
                 internalViewer -> model.viewing = entry
                 isApk -> launchApkInstall(entry)
                 else -> try {
-                    startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(entry.uri, entry.mime)
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(entry.uri, entry.mime)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    )
                 } catch (_: android.content.ActivityNotFoundException) {
                     model.error = "No compatible viewer installed"
-                } catch (_: SecurityException) {
-                    model.error = "File access unavailable"
+                } catch (_: Exception) {
+                    model.error = "No built-in viewer for this file type"
                 }
             }
         }
+
         fun navigate(destination: ExplorerPage) {
             if (model.mutating) return
             category = null
@@ -241,13 +420,16 @@ class MainActivity : ComponentActivity() {
 
         if (showHomeSearchDialog) {
             TvInputDialog(
-                title = "Search folder",
+                title = stringResource(R.string.explorer_search),
                 label = stringResource(R.string.explorer_search),
                 initial = homeSearch,
-                confirmLabel = "Search",
+                confirmLabel = "OK",
                 onConfirm = { value ->
-                    navigate(ExplorerPage.FILES)
-                    homeSearch = value.trim()
+                    val clean = value.trim()
+                    if (clean.isNotEmpty()) {
+                        navigate(ExplorerPage.FILES)
+                        homeSearch = clean
+                    }
                 },
                 onDismiss = { showHomeSearchDialog = false }
             )
@@ -272,6 +454,9 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = VireoCardShape)
+        val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
+
         if (parent == null) {
             BackHandler(page != ExplorerPage.HOME && !model.mutating) { navigate(ExplorerPage.HOME) }
             val usbUnavailable = stringResource(R.string.explorer_usb_unavailable)
@@ -282,82 +467,313 @@ class MainActivity : ComponentActivity() {
                     volume.volume.uuid?.equals(DocumentsContract.getTreeDocumentId(uri).substringBefore(':'), true) == true
                 }
             }
+
+            var categoryResults by remember { mutableStateOf<List<Entry>>(emptyList()) }
+            var categoryLoading by remember { mutableStateOf(false) }
+            val activeDirectRoot = remember(directStorageGranted, volumes) {
+                if (directStorageGranted) {
+                    (volumes.firstOrNull { !it.removable && it.directUri != null }?.directory ?: primaryDirectStorageDir())
+                        ?.let { Uri.fromFile(it) }
+                } else null
+            }
+
+            LaunchedEffect(page, category, homeSearch, activeDirectRoot, model.roots, model.revision) {
+                if (page == ExplorerPage.FILES && (category != null || homeSearch.isNotEmpty())) {
+                    val scanTarget = activeDirectRoot ?: model.roots.firstOrNull()?.let { storage.root(it) }
+                    if (scanTarget != null) {
+                        categoryLoading = true
+                        try {
+                            val raw = storage.queryCategoryOrSearch(scanTarget, category, homeSearch)
+                            categoryResults = raw
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            categoryResults = emptyList()
+                        } finally {
+                            categoryLoading = false
+                        }
+                    } else {
+                        categoryResults = emptyList()
+                    }
+                } else {
+                    categoryResults = emptyList()
+                    categoryLoading = false
+                }
+            }
+
             ExplorerHome(
                 page = page,
                 notice = model.error ?: folderPickerNotice,
                 onPage = ::navigate,
                 onSearch = { showHomeSearchDialog = true },
-                onInternal = {
-                    val root = model.roots.firstOrNull { uri ->
-                        uri.authority == "com.android.externalstorage.documents" &&
-                            DocumentsContract.getTreeDocumentId(uri).substringBefore(':') == "primary"
-                    }
-                    if (root != null) openRoot(root)
-                    else pickFolder(volumes.firstOrNull { !it.removable })
-                },
+                onInternal = { openInternalStorageDirectly() },
                 onUsb = {
-                    navigate(ExplorerPage.FILES)
-                    usbOnly = true
-                    if (volumes.none { it.removable }) folderPickerNotice = usbUnavailable
+                    val removable = volumes.filter { it.removable && it.isMounted }
+                    if (removable.isEmpty()) {
+                        navigate(ExplorerPage.FILES)
+                        usbOnly = true
+                        folderPickerNotice = usbUnavailable
+                    } else if (directStorageGranted && removable.size == 1 && removable.first().directory != null) {
+                        openDirectDirectory(removable.first().directory!!, removable.first().label)
+                    } else {
+                        navigate(ExplorerPage.FILES)
+                        usbOnly = true
+                    }
                 },
                 onFolders = { navigate(ExplorerPage.FILES) },
-                onCategory = {
-                    navigate(ExplorerPage.FILES)
-                    category = it
+                onCategory = { selectedCategory ->
+                    if (!directStorageGranted && model.roots.isEmpty()) {
+                        requestDirectStoragePermission {
+                            navigate(ExplorerPage.FILES)
+                            category = selectedCategory
+                        }
+                    } else {
+                        navigate(ExplorerPage.FILES)
+                        category = selectedCategory
+                    }
                 }
             ) {
                 when (page) {
                     ExplorerPage.FILES -> {
-                        if (categoryLabel != null || homeSearch.isNotEmpty()) item {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(categoryLabel ?: homeSearch, style = MaterialTheme.typography.titleMedium)
-                                Text(stringResource(R.string.explorer_category_scope))
-                            }
-                        }
-                        if (usbOnly) {
-                            items(visibleVolumes, key = { it.volume.uuid ?: it.label }) { volume ->
-                                Button(
-                                    enabled = volume.state == android.os.Environment.MEDIA_MOUNTED ||
-                                        volume.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY,
-                                    onClick = { pickFolder(volume) }
-                                ) { Text(volume.label) }
-                            }
-                        } else {
+                        if (!directStorageGranted) {
                             item {
-                                Button(onClick = { pickFolder() }) { Text(stringResource(R.string.explorer_add_folder)) }
-                            }
-                            if (authorizedFolders.isEmpty()) item { Text(stringResource(R.string.explorer_folder_access)) }
-                        }
-                        if (authorizedFolders.isNotEmpty()) item {
-                            Text(stringResource(R.string.explorer_authorized), style = MaterialTheme.typography.titleMedium)
-                        }
-                        items(authorizedFolders, key = { it.toString() }) { uri ->
-                            Button(onClick = { openRoot(uri) }) { Text(DocumentsContract.getTreeDocumentId(uri)) }
-                        }
-                        if (!usbOnly && settings.recent.isNotEmpty()) {
-                            item {
-                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(stringResource(R.string.explorer_recent), style = MaterialTheme.typography.titleMedium)
-                                    Button(onClick = { updateSettings { preferences.clearRecent() } }) {
-                                        Text(stringResource(R.string.explorer_clear_recent))
+                                Card(
+                                    onClick = { requestDirectStoragePermission() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = CardDefaults.shape(VireoCardShape),
+                                    colors = CardDefaults.colors(
+                                        containerColor = colors.surface,
+                                        contentColor = colors.onSurface,
+                                        focusedContainerColor = colors.primaryContainer,
+                                        focusedContentColor = colors.onPrimaryContainer
+                                    ),
+                                    border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                                    scale = CardDefaults.scale(focusedScale = 1.01f)
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(20.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            ExplorerIcon(R.drawable.symbol_hard_drive)
+                                        }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Text(
+                                                stringResource(R.string.explorer_grant_storage_title),
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = colors.primary
+                                            )
+                                            Text(
+                                                stringResource(R.string.explorer_grant_storage_subtitle),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = colors.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            stringResource(R.string.explorer_grant_storage_action),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = colors.primary
+                                        )
                                     }
                                 }
                             }
-                            items(settings.recent, key = { "recent:" + it }) { value ->
-                                Button(onClick = { openSavedFolder(value) }) {
-                                    Text(Uri.parse(value).lastPathSegment ?: value, maxLines = 2)
+                        }
+
+                        if (category != null || homeSearch.isNotEmpty()) {
+                            item {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    category?.let { activeCat ->
+                                        ClearFilterButton(stringResource(activeCat.label), activeCat.icon, enabled = true) {
+                                            category = null
+                                        }
+                                    }
+                                    if (homeSearch.isNotEmpty()) {
+                                        ClearFilterButton(homeSearch, R.drawable.symbol_search, enabled = true) {
+                                            homeSearch = ""
+                                        }
+                                    }
+                                    Text(
+                                        if (categoryLoading) stringResource(R.string.explorer_reading_storage)
+                                        else "${categoryResults.size} items",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = colors.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (!categoryLoading && categoryResults.isEmpty() && (directStorageGranted || model.roots.isNotEmpty())) {
+                                item {
+                                    Text(
+                                        if (homeSearch.isNotEmpty()) stringResource(R.string.explorer_no_search_results)
+                                        else stringResource(R.string.explorer_no_category_files),
+                                        color = colors.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            items(categoryResults, key = { "cat:" + it.uri.toString() }) { entry ->
+                                FolderEntry(
+                                    entry = entry,
+                                    revision = model.revision,
+                                    grid = false,
+                                    selected = false,
+                                    enabled = true,
+                                    onClick = { openEntry(entry) },
+                                    onLongClick = { model.selected = entry },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        } else {
+                            if (directStorageGranted) {
+                                items(visibleVolumes.filter { it.isMounted && it.directory != null }, key = { "vol:" + (it.volume.uuid ?: it.label) }) { volume ->
+                                    ListItem(
+                                        selected = false,
+                                        onClick = { openDirectDirectory(volume.directory!!, volume.label) },
+                                        leadingContent = {
+                                            Box(
+                                                Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                ExplorerIcon(if (volume.removable) R.drawable.symbol_usb else R.drawable.symbol_hard_drive)
+                                            }
+                                        },
+                                        headlineContent = {
+                                            Text(volume.label, style = MaterialTheme.typography.titleMedium)
+                                        },
+                                        supportingContent = {
+                                            Text(volume.directory?.absolutePath.orEmpty(), color = colors.onSurfaceVariant)
+                                        },
+                                        shape = ListItemDefaults.shape(VireoCardShape),
+                                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                                    )
+                                }
+                            } else if (usbOnly) {
+                                items(visibleVolumes, key = { it.volume.uuid ?: it.label }) { volume ->
+                                    ListItem(
+                                        selected = false,
+                                        enabled = volume.isMounted,
+                                        onClick = { pickFolder(volume) },
+                                        leadingContent = {
+                                            Box(
+                                                Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                ExplorerIcon(R.drawable.symbol_usb)
+                                            }
+                                        },
+                                        headlineContent = { Text(volume.label) },
+                                        shape = ListItemDefaults.shape(VireoCardShape),
+                                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                                    )
+                                }
+                            }
+
+                            if (authorizedFolders.isNotEmpty()) {
+                                item {
+                                    Text(stringResource(R.string.explorer_authorized), style = MaterialTheme.typography.titleMedium)
+                                }
+                                items(authorizedFolders, key = { it.toString() }) { uri ->
+                                    ListItem(
+                                        selected = false,
+                                        onClick = { openRoot(uri) },
+                                        leadingContent = {
+                                            Box(
+                                                Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                ExplorerIcon(R.drawable.symbol_folder)
+                                            }
+                                        },
+                                        headlineContent = { Text(DocumentsContract.getTreeDocumentId(uri)) },
+                                        shape = ListItemDefaults.shape(VireoCardShape),
+                                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                                    )
+                                }
+                            }
+
+                            if (!usbOnly && settings.recent.isNotEmpty()) {
+                                item {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(stringResource(R.string.explorer_recent), style = MaterialTheme.typography.titleMedium)
+                                        ExplorerOption(
+                                            selected = false,
+                                            onClick = { updateSettings { preferences.clearRecent() } }
+                                        ) {
+                                            Text(stringResource(R.string.explorer_clear_recent))
+                                        }
+                                    }
+                                }
+                                items(settings.recent, key = { "recent:$it" }) { value ->
+                                    val parsed = Uri.parse(value)
+                                    val title = parsed.lastPathSegment?.substringAfterLast(':') ?: value
+                                    ListItem(
+                                        selected = false,
+                                        onClick = { openSavedFolder(value) },
+                                        leadingContent = {
+                                            Box(
+                                                Modifier.size(40.dp).background(colors.surfaceVariant, VireoPillShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                ExplorerIcon(R.drawable.symbol_folder)
+                                            }
+                                        },
+                                        headlineContent = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        supportingContent = {
+                                            Text(parsed.path ?: value, maxLines = 1, overflow = TextOverflow.Ellipsis, color = colors.onSurfaceVariant)
+                                        },
+                                        shape = ListItemDefaults.shape(VireoCardShape),
+                                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                                    )
                                 }
                             }
                         }
                     }
                     ExplorerPage.FAVORITES -> {
-                        if (settings.favorites.isEmpty()) item { Text(stringResource(R.string.explorer_no_favorites)) }
+                        if (settings.favorites.isEmpty()) {
+                            item {
+                                Text(stringResource(R.string.explorer_no_favorites), color = colors.onSurfaceVariant)
+                            }
+                        }
                         items(settings.favorites, key = { it }) { value ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { openSavedFolder(value) }, modifier = Modifier.weight(1f)) {
-                                    Text(Uri.parse(value).lastPathSegment ?: value, maxLines = 2)
-                                }
-                                Button(onClick = { updateSettings { preferences.toggleFavorite(value) } }) {
+                            val parsed = Uri.parse(value)
+                            val title = parsed.lastPathSegment?.substringAfterLast(':') ?: value
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ListItem(
+                                    selected = false,
+                                    onClick = { openSavedFolder(value) },
+                                    modifier = Modifier.weight(1f),
+                                    leadingContent = {
+                                        Box(
+                                            Modifier.size(40.dp).background(colors.surfaceVariant, VireoPillShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            ExplorerIcon(R.drawable.symbol_star)
+                                        }
+                                    },
+                                    headlineContent = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    supportingContent = {
+                                        Text(parsed.path ?: value, maxLines = 1, overflow = TextOverflow.Ellipsis, color = colors.onSurfaceVariant)
+                                    },
+                                    shape = ListItemDefaults.shape(VireoCardShape),
+                                    border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                                )
+                                ExplorerOption(
+                                    selected = false,
+                                    onClick = { updateSettings { preferences.toggleFavorite(value) } }
+                                ) {
                                     Text(stringResource(R.string.explorer_remove_favorite))
                                 }
                             }
@@ -365,22 +781,70 @@ class MainActivity : ComponentActivity() {
                     }
                     ExplorerPage.TRANSFERS -> {
                         val pending = model.clipboard
-                        if (pending == null && model.transferJob == null) item {
-                            Text(stringResource(R.string.explorer_no_transfer))
-                        }
-                        if (pending != null) item {
-                            val label = if (pending.second) R.plurals.explorer_move_queue else R.plurals.explorer_copy_queue
-                            Text(pluralStringResource(label, pending.first.size, pending.first.size))
-                            Button(onClick = { model.clipboard = null }, enabled = !model.mutating) {
-                                Text(stringResource(R.string.explorer_clear_queue))
+                        if (pending == null && model.transferJob == null) {
+                            item {
+                                Text(stringResource(R.string.explorer_no_transfer), color = colors.onSurfaceVariant)
                             }
                         }
-                        if (model.transferJob != null) item {
-                            val bytes by model.progress.collectAsStateWithLifecycle()
-                            Text(stringResource(R.string.explorer_transfer_progress,
-                                android.text.format.Formatter.formatFileSize(this@MainActivity, bytes)))
-                            Button(onClick = { model.transferJob?.cancel() }) {
-                                Text(stringResource(R.string.explorer_cancel_transfer))
+                        if (pending != null) {
+                            item {
+                                Surface(
+                                    shape = VireoCardShape,
+                                    colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface),
+                                    border = restingBorder,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(20.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val label = if (pending.second) R.plurals.explorer_move_queue else R.plurals.explorer_copy_queue
+                                        Text(
+                                            pluralStringResource(label, pending.first.size, pending.first.size),
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        ExplorerOption(
+                                            selected = false,
+                                            enabled = !model.mutating,
+                                            onClick = { model.clipboard = null }
+                                        ) {
+                                            Text(stringResource(R.string.explorer_clear_queue))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (model.transferJob != null) {
+                            item {
+                                val bytes by model.progress.collectAsStateWithLifecycle()
+                                Surface(
+                                    shape = VireoCardShape,
+                                    colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface),
+                                    border = restingBorder,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(20.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            stringResource(
+                                                R.string.explorer_transfer_progress,
+                                                Formatter.formatFileSize(this@MainActivity, bytes)
+                                            ),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = colors.primary
+                                        )
+                                        ExplorerOption(
+                                            selected = false,
+                                            onClick = { model.transferJob?.cancel() }
+                                        ) {
+                                            Text(stringResource(R.string.explorer_cancel_transfer))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -395,7 +859,8 @@ class MainActivity : ComponentActivity() {
                                 },
                                 trailingContent = { Switch(checked = gridView, onCheckedChange = null) },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = ListItemDefaults.shape(VireoCardShape)
+                                shape = ListItemDefaults.shape(VireoCardShape),
+                                border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
                             )
                         }
                         item {
@@ -420,16 +885,17 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+
         val folderEntries = model.entriesFor(parent)
         val visible = model.visibleFor(parent)
         val listingPending = model.listingPending
 
         if (showFolderSearchDialog) {
             TvInputDialog(
-                title = "Search folder",
+                title = stringResource(R.string.explorer_search),
                 label = stringResource(R.string.explorer_search),
                 initial = model.search,
-                confirmLabel = "Search",
+                confirmLabel = "OK",
                 onConfirm = { model.search = it.trim() },
                 onDismiss = { showFolderSearchDialog = false }
             )
@@ -437,7 +903,7 @@ class MainActivity : ComponentActivity() {
 
         if (showNewFolderDialog) {
             TvInputDialog(
-                title = "New folder",
+                title = stringResource(R.string.explorer_new_folder),
                 label = "Folder name",
                 initial = "",
                 confirmLabel = "OK",
@@ -493,36 +959,31 @@ class MainActivity : ComponentActivity() {
         if (extractingZip != null) {
             TvConfirmDialog(
                 title = "Extract ZIP?",
-                message = "Extract into a new folder. Completed files may remain if extraction fails.",
+                message = "Extract into a new folder.",
                 confirmLabel = "Extract",
                 onConfirm = { model.archive { progress -> storage.extractZip(extractingZip, parent, progress) } },
                 onDismiss = { extractZipItemDialog = null }
             )
         }
 
-        var folderActions by remember(parent) { mutableStateOf(false) }
         val actionsOpen = model.selected != null
-        LaunchedEffect(parent, model.revision, folderActions) {
-            if (folderActions) model.loadAvailableSpace(parent)
+        LaunchedEffect(parent, model.revision) {
+            model.loadAvailableSpace(parent)
         }
         fun backFromFolder() {
             if (model.mutating) return
             when {
                 actionsOpen -> model.selected = null
-                folderActions -> {
-                    folderActions = false
-                    primaryFocus.requestFocus()
-                }
                 model.multi -> { model.multi = false; model.marked = emptySet() }
                 else -> model.path = model.path.dropLast(1)
             }
         }
         LaunchedEffect(parent) { primaryFocus.requestFocus() }
         BackHandler { backFromFolder() }
+
         val item = model.selected
         if (item != null) {
             val actionFocus = remember { FocusRequester() }
-            val colors = MaterialTheme.colorScheme
             LaunchedEffect(item.uri) { actionFocus.requestFocus() }
             androidx.compose.ui.window.Dialog(onDismissRequest = { model.selected = null }) {
                 Surface(
@@ -531,7 +992,7 @@ class MainActivity : ComponentActivity() {
                         containerColor = colors.surface,
                         contentColor = colors.onSurface
                     ),
-                    border = Border(androidx.compose.foundation.BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
+                    border = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
                 ) {
                     Column(
                         modifier = Modifier.widthIn(min = 420.dp, max = 560.dp).padding(24.dp),
@@ -539,7 +1000,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text(item.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
-                            if (item.size >= 0) android.text.format.Formatter.formatFileSize(this@MainActivity, item.size) else item.mime,
+                            if (item.size >= 0) Formatter.formatFileSize(this@MainActivity, item.size) else item.mime,
                             color = colors.onSurfaceVariant
                         )
                         FlowRow(
@@ -550,7 +1011,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.focusRequester(actionFocus),
                                 enabled = !model.mutating,
                                 onClick = { model.selected = null }
-                            ) { Text("Back to files") }
+                            ) { Text(stringResource(R.string.explorer_back)) }
                             Button(enabled = !model.mutating, onClick = { model.selected = null; openEntry(item) }) {
                                 Text(if (!item.directory && FileCategory.APK.matches(item)) "Install APK" else "Open")
                             }
@@ -579,62 +1040,129 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val isFavorite = parent.toString() in settings.favorites
+
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Row(
                 Modifier.fillMaxWidth(),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedButton(modifier = Modifier.focusRequester(primaryFocus),
-                    enabled = !model.mutating, onClick = ::backFromFolder) { Text("Back") }
+                OutlinedButton(
+                    modifier = Modifier.focusRequester(primaryFocus),
+                    enabled = !model.mutating,
+                    onClick = ::backFromFolder
+                ) {
+                    Text(stringResource(R.string.explorer_back))
+                }
                 Column(Modifier.weight(1f)) {
-                    Text(model.path.last().second, style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (model.path.size > 1) {
-                        Text(model.path.dropLast(1).joinToString(" / ") { it.second },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        model.path.last().second,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = colors.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val breadcrumb = buildString {
+                        if (model.path.size > 1) {
+                            append(model.path.dropLast(1).joinToString(" / ") { it.second })
+                        }
+                        model.freeBytes?.let { free ->
+                            if (isNotEmpty()) append(" · ")
+                            append(Formatter.formatFileSize(this@MainActivity, free))
+                            append(" free")
+                        }
+                    }
+                    if (breadcrumb.isNotEmpty()) {
+                        Text(
+                            breadcrumb,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-                IconButton(enabled = !model.mutating,
-                    onClick = { showFolderSearchDialog = true }) {
+                IconButton(
+                    enabled = !model.mutating,
+                    onClick = { showFolderSearchDialog = true }
+                ) {
                     ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
                 }
-                OutlinedButton(enabled = !model.mutating, onClick = { folderActions = !folderActions }) {
-                    Text(if (folderActions) "Hide tools" else "Folder tools")
-                }
             }
-            if (folderActions) FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val isFavorite = parent.toString() in settings.favorites
-                OutlinedButton(enabled = !model.mutating, onClick = { model.error = null; model.revision++ }) { Text("Refresh") }
+                ExplorerOption(
+                    selected = false,
+                    enabled = !model.mutating,
+                    onClick = { updateSettings { preferences.nextSort() } }
+                ) {
+                    Text(sortLabels[sortIndex])
+                }
+                ExplorerOption(
+                    selected = gridView,
+                    enabled = !model.mutating,
+                    onClick = { updateSettings { preferences.toggleGrid() } }
+                ) {
+                    Text(stringResource(if (gridView) R.string.explorer_grid else R.string.explorer_list))
+                }
+                if (writable) {
+                    ExplorerOption(
+                        selected = false,
+                        enabled = !model.mutating && !model.busy,
+                        onClick = { showNewFolderDialog = true },
+                        leadingIcon = { ExplorerIcon(R.drawable.symbol_folder) }
+                    ) {
+                        Text(stringResource(R.string.explorer_new_folder))
+                    }
+                }
+                ExplorerOption(
+                    selected = model.multi,
+                    enabled = !model.mutating && !model.busy,
+                    onClick = {
+                        model.multi = !model.multi
+                        model.marked = emptySet()
+                    }
+                ) {
+                    Text(stringResource(if (model.multi) R.string.explorer_cancel_selection else R.string.explorer_select_multiple))
+                }
                 ExplorerOption(
                     selected = isFavorite,
                     enabled = !model.mutating,
                     onClick = { updateSettings { preferences.toggleFavorite(parent.toString()) } },
                     leadingIcon = { ExplorerIcon(R.drawable.symbol_star) }
-                ) { Text(stringResource(R.string.explorer_favorites)) }
-                OutlinedButton(enabled = !model.mutating, onClick = { updateSettings { preferences.toggleGrid() } }) {
-                    Text(stringResource(if (gridView) R.string.explorer_list else R.string.explorer_grid))
+                ) {
+                    Text(stringResource(R.string.explorer_favorites))
                 }
-                OutlinedButton(enabled = !model.mutating, onClick = { updateSettings { preferences.nextSort() } }) { Text(sortLabels[sortIndex]) }
-                OutlinedButton(enabled = !model.mutating && !model.busy, onClick = { model.scanOpen = true }) { Text("Analyze") }
-                OutlinedButton(enabled = !model.mutating && !model.busy, onClick = {
-                    model.multi = !model.multi
-                    model.marked = emptySet()
-                    folderActions = false
-                    primaryFocus.requestFocus()
-                }) { Text(if (model.multi) "Cancel selection" else "Select multiple") }
-                Button(enabled = writable && !model.mutating && !model.busy,
-                    onClick = { showNewFolderDialog = true }) {
-                    Text("New folder")
+                ExplorerOption(
+                    selected = false,
+                    enabled = !model.mutating && !model.busy,
+                    onClick = { model.scanOpen = true },
+                    leadingIcon = { ExplorerIcon(R.drawable.symbol_cleaning_services) }
+                ) {
+                    Text(stringResource(R.string.explorer_analyze_folder))
+                }
+                ExplorerOption(
+                    selected = false,
+                    enabled = !model.mutating,
+                    onClick = { model.error = null; model.revision++ }
+                ) {
+                    Text(stringResource(R.string.explorer_refresh))
                 }
             }
+
             if (category != null || homeSearch.isNotEmpty() || model.search.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     category?.let { active ->
                         ClearFilterButton(stringResource(active.label), active.icon, enabled = !model.mutating) {
                             category = null
@@ -655,37 +1183,78 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            model.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (folderActions) model.freeBytes?.let {
-                Text("Available: " + android.text.format.Formatter.formatFileSize(this@MainActivity, it))
-            }
-            if(model.busy) Text("Reading storage…")
-            if(model.mutating) Text("Working…")
+
+            model.error?.let { Text(it, color = colors.error) }
+            if (model.busy) Text(stringResource(R.string.explorer_reading_storage), color = colors.onSurfaceVariant)
+            if (model.mutating) Text(stringResource(R.string.explorer_working), color = colors.primary)
+
             val pending = model.clipboard
             if (pending != null) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text((if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name })
-                    Button(enabled = writable && !model.mutating && !model.busy, onClick = { model.paste(parent) }) { Text("Paste") }
-                    Button(enabled = !model.mutating, onClick = { model.conflictPolicy = ConflictPolicy.entries[(model.conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size] }) { Text(model.conflictPolicy.label) }
-                    Button(enabled = !model.mutating, onClick = { model.clipboard = null }) { Text("Clear") }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        (if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name },
+                        color = colors.primary,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Button(enabled = writable && !model.mutating && !model.busy, onClick = { model.paste(parent) }) { Text("Paste here") }
+                    ExplorerOption(
+                        selected = false,
+                        enabled = !model.mutating,
+                        onClick = {
+                            model.conflictPolicy = ConflictPolicy.entries[(model.conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size]
+                        }
+                    ) { Text(model.conflictPolicy.label) }
+                    ExplorerOption(selected = false, enabled = !model.mutating, onClick = { model.clipboard = null }) { Text("Clear") }
                 }
             }
+
             if (model.transferJob != null) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     val bytes by model.progress.collectAsStateWithLifecycle()
-                    Text("${bytes / 1024} KiB")
-                    Button(onClick = { model.transferJob?.cancel() }) { Text("Cancel transfer") }
+                    Text(Formatter.formatFileSize(this@MainActivity, bytes), color = colors.primary)
+                    ExplorerOption(selected = false, onClick = { model.transferJob?.cancel() }) {
+                        Text(stringResource(R.string.explorer_cancel_transfer))
+                    }
                 }
             }
+
             if (model.multi) {
                 val batch = folderEntries.filter { it.uri in model.marked }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${batch.size} selected")
-                    Button(enabled = !model.mutating && !model.busy && !listingPending, onClick = { model.marked = visible.map { it.uri }.toSet() }) { Text("Select all visible") }
-                    Button(enabled = !model.mutating && batch.isNotEmpty(), onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }) { Text("Copy selected") }
-                    Button(enabled = !model.mutating && writable && batch.isNotEmpty() && batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 }, onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }) { Text("Move selected") }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("${batch.size} selected", color = colors.primary, style = MaterialTheme.typography.titleSmall)
+                    ExplorerOption(
+                        selected = batch.size == visible.size && visible.isNotEmpty(),
+                        enabled = !model.mutating && !model.busy && !listingPending,
+                        onClick = {
+                            model.marked = if (batch.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
+                        }
+                    ) { Text("Select all (${visible.size})") }
+                    ExplorerOption(
+                        selected = false,
+                        enabled = !model.mutating && batch.isNotEmpty(),
+                        onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }
+                    ) { Text("Copy") }
+                    ExplorerOption(
+                        selected = false,
+                        enabled = !model.mutating && writable && batch.isNotEmpty() &&
+                            batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 },
+                        onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }
+                    ) { Text("Move") }
                 }
             }
+
             val itemReady = !model.mutating && !model.busy && !listingPending
             val select: (Entry) -> Unit = { entry ->
                 if (itemReady) {
@@ -694,13 +1263,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (!model.busy && !listingPending && visible.isEmpty() && model.error == null) {
-                Text(when {
-                    model.search.isNotEmpty() || homeSearch.isNotEmpty() -> "No files match your search."
-                    category != null -> stringResource(R.string.explorer_no_category_files)
-                    else -> "This folder is empty."
-                })
+                Text(
+                    when {
+                        model.search.isNotEmpty() || homeSearch.isNotEmpty() -> stringResource(R.string.explorer_no_search_results)
+                        category != null -> stringResource(R.string.explorer_no_category_files)
+                        else -> stringResource(R.string.explorer_empty_folder)
+                    },
+                    color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
             }
-            if (visible.isNotEmpty() && !model.multi) Text("Press OK to open. Hold OK for file actions.")
+
             val entryFocus = remember { FocusRequester() }
             val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
             val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
@@ -718,7 +1291,6 @@ class MainActivity : ComponentActivity() {
                 val action = if (model.multi) null else ({
                     if (itemReady) {
                         returnEntries[parent] = entry.uri
-                        folderActions = false
                         model.selected = entry
                     }
                 })
@@ -738,8 +1310,10 @@ class MainActivity : ComponentActivity() {
             val padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
             if (gridView) {
                 LazyVerticalGrid(
-                    state = gridState, columns = GridCells.Adaptive(180.dp),
-                    modifier = Modifier.weight(1f).focusRestorer(), contentPadding = padding,
+                    state = gridState,
+                    columns = GridCells.Adaptive(210.dp),
+                    modifier = Modifier.weight(1f).focusRestorer(),
+                    contentPadding = padding,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -747,7 +1321,9 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
                 LazyColumn(
-                    Modifier.weight(1f).focusRestorer(), state = listState, contentPadding = padding,
+                    Modifier.weight(1f).focusRestorer(),
+                    state = listState,
+                    contentPadding = padding,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
@@ -760,8 +1336,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ClearFilterButton(label: String, icon: Int, enabled: Boolean, onClear: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val restingBorder = Border(androidx.compose.foundation.BorderStroke(1.dp, colors.primary), shape = VireoPillShape)
-    val focusBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, colors.primary), shape = VireoPillShape)
+    val restingBorder = Border(BorderStroke(1.dp, colors.primary), shape = VireoPillShape)
+    val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = VireoPillShape)
     Surface(
         selected = true,
         enabled = enabled,
@@ -788,13 +1364,11 @@ private fun ClearFilterButton(label: String, icon: Int, enabled: Boolean, onClea
         Row(
             Modifier.heightIn(min = 42.dp).padding(start = 8.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.size(26.dp).then(
-                    Modifier.padding(0.dp)
-                ),
-                contentAlignment = androidx.compose.ui.Alignment.Center
+                Modifier.size(26.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Surface(
                     shape = VireoPillShape,
@@ -804,7 +1378,7 @@ private fun ClearFilterButton(label: String, icon: Int, enabled: Boolean, onClea
                     ),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    Box(contentAlignment = Alignment.Center) {
                         Icon(
                             androidx.compose.ui.res.painterResource(icon),
                             contentDescription = null,

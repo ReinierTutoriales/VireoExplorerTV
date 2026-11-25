@@ -1,9 +1,11 @@
 package com.reiniertutoriales.vireoexplorertv
 
+import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +21,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,6 +36,7 @@ import kotlinx.coroutines.*
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.EnumSet
+import java.util.Locale
 
 internal class SmbEndpoint(val host: String, val share: String, val user: String, val domain: String, val password: CharArray)
 private data class SmbEntry(val name: String, val directory: Boolean, val bytes: Long)
@@ -178,6 +182,7 @@ private fun openSmbInputStream(session: SmbShareSession, remotePath: String): In
 @Composable
 internal fun SmbBrowser(onClose: () -> Unit) {
     val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
     var endpoint by remember { mutableStateOf<SmbEndpoint?>(null) }
     val session = remember(endpoint) { endpoint?.let { SmbShareSession(it) } }
     var path by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -206,20 +211,21 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             status = null
             try {
                 withTimeoutOrNull(15000) { discoverSmb(context).collect { services = it } }
-                if (services.isEmpty()) status = "No SMB servers found. You can enter the host manually."
+                if (services.isEmpty()) status = "No SMB servers found automatically. Use Manual SMB connection."
             }
             catch (e: CancellationException) { throw e }
             catch (_: Exception) { status = "Unable to discover SMB servers" }
             finally { discovering = false }
         }
     }
+
     var pending by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     var transfer by remember { mutableStateOf<Job?>(null) }
     var playback by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     var imageViewing by remember { mutableStateOf<Pair<String, SmbEntry>?>(null) }
     val server = endpoint
     val activeSession = session
-    val backFocus = remember { FocusRequester() }
+    val primaryFocus = remember { FocusRequester() }
 
     val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val request = pending
@@ -249,7 +255,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     status = "Upload cancelled; a partial remote file may remain"
                     throw e
                 } catch (_: Exception) {
-                    status = "Upload failed (existing file, access or connection); a partial file may remain"
+                    status = "Upload failed (existing file, access or connection)"
                 } finally { transfer = null; refresh++ }
             }
         }
@@ -352,14 +358,14 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     if (newFolderDialog && activeSession != null) {
         val folder = path.toList()
         TvInputDialog(
-            title = "New remote folder",
+            title = stringResource(R.string.explorer_new_folder),
             label = "Folder name",
             initial = "",
             confirmLabel = "OK",
             validate = { if (!validSmbName(it)) "Invalid SMB name" else null },
             onConfirm = { name ->
                 transfer = scope.launch {
-                    try { createSmbFolder(activeSession, folder, name); status = "Operation completed" }
+                    try { createSmbFolder(activeSession, folder, name); status = "Folder created" }
                     catch (e: CancellationException) { throw e }
                     catch (_: Exception) { status = "Operation failed: name conflict, access or connection" }
                     finally { transfer = null; refresh++ }
@@ -372,7 +378,6 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     val selectedSmbItem = actionTarget
     if (selectedSmbItem != null && server != null) {
         val actionFocus = remember { FocusRequester() }
-        val colors = MaterialTheme.colorScheme
         val remotePath = (path + selectedSmbItem.name).joinToString("\\")
         val mime = mediaMime(selectedSmbItem.name)
         val playable = !selectedSmbItem.directory && (mime.startsWith("video/") || mime.startsWith("audio/"))
@@ -394,7 +399,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 ) {
                     Text(selectedSmbItem.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     if (!selectedSmbItem.directory && selectedSmbItem.bytes >= 0) {
-                        Text(android.text.format.Formatter.formatFileSize(context, selectedSmbItem.bytes), color = colors.onSurfaceVariant)
+                        Text(Formatter.formatFileSize(context, selectedSmbItem.bytes), color = colors.onSurfaceVariant)
                     }
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -403,7 +408,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         OutlinedButton(
                             modifier = Modifier.focusRequester(actionFocus),
                             onClick = { actionTarget = null }
-                        ) { Text("Back") }
+                        ) { Text(stringResource(R.string.explorer_back)) }
                         if (selectedSmbItem.directory || playable || viewableImage) {
                             Button(onClick = {
                                 actionTarget = null
@@ -447,7 +452,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             validate = { if (!validSmbName(it)) "Invalid SMB name" else null },
             onConfirm = { name ->
                 transfer = scope.launch {
-                    try { renameSmbEntry(activeSession, folder, renaming, name); status = "Operation completed" }
+                    try { renameSmbEntry(activeSession, folder, renaming, name); status = "Renamed" }
                     catch (e: CancellationException) { throw e }
                     catch (_: Exception) { status = "Operation failed: name conflict, access or connection" }
                     finally { transfer = null; refresh++ }
@@ -469,7 +474,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     try {
                         deleteSmbEntry(activeSession, folder, deleting)
                         status = "Remote item deleted"
-                        backFocus.requestFocus()
+                        primaryFocus.requestFocus()
                     }
                     catch (e: CancellationException) { throw e }
                     catch (_: Exception) { status = "Delete failed: item changed, folder not empty, access or connection" }
@@ -480,137 +485,427 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         )
     }
 
-    LaunchedEffect(server, path) { backFocus.requestFocus() }
-    Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("SMB network", style = MaterialTheme.typography.headlineMedium)
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(modifier = Modifier.focusRequester(backFocus), enabled = transfer == null, onClick = { back() }) {
-                Text(if (server != null && path.isEmpty()) "Disconnect" else "Back")
+    val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = VireoCardShape)
+    val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
+    val folderTypeLabel = stringResource(R.string.explorer_type_folder)
+
+    LaunchedEffect(server, path) { primaryFocus.requestFocus() }
+
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ExplorerOption(
+                selected = false,
+                enabled = transfer == null,
+                onClick = { back() }
+            ) {
+                Text(if (server != null && path.isEmpty()) stringResource(R.string.smb_disconnect) else stringResource(R.string.explorer_back))
             }
-            Button(enabled = !loading && transfer == null && !credentialBusy, onClick = { showConnectDialog = true }) {
-                Text("Connect")
+            Column(Modifier.weight(1f)) {
+                Text(
+                    server?.let { path.lastOrNull() ?: "${it.host} / ${it.share}" }
+                        ?: stringResource(R.string.smb_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colors.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    server?.let { (listOf(it.host, it.share) + path).joinToString(" / ") }
+                        ?: stringResource(R.string.smb_subtitle_disconnected),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
-            if (server != null) {
-                OutlinedButton(enabled = !loading && transfer == null, onClick = { refresh++ }) { Text("Refresh") }
-                OutlinedButton(enabled = !loading && transfer == null && pending == null, onClick = {
-                    try { upload.launch(arrayOf("*/*")) } catch (_: Exception) { status = "System file picker unavailable" }
-                }) { Text("Upload") }
-                OutlinedButton(enabled = !loading && transfer == null, onClick = { newFolderDialog = true }) {
-                    Text("New folder")
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (server != null) OutlinedButton(enabled = !loading && transfer == null && !credentialBusy, onClick = {
-                val snapshot = SmbEndpoint(server.host, server.share, server.user, server.domain, server.password.copyOf())
-                credentialBusy = true
-                scope.launch {
-                    try { credentials.save(snapshot); status = "Connection saved encrypted" }
-                    catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { status = "Could not save credentials" }
-                    finally { snapshot.password.fill('\u0000'); credentialBusy = false }
-                }
-            }) { Text("Remember connection") }
-            OutlinedButton(enabled = !loading && transfer == null && !credentialBusy, onClick = {
-                credentialBusy = true
-                scope.launch {
-                    try {
-                        val saved = credentials.load()
-                        if (saved == null) status = "No saved connection"
-                        else { endpoint = saved; path = emptyList(); status = null; discovering = false }
-                    } catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { status = "Saved credentials unavailable; forget and reconnect" }
-                    finally { credentialBusy = false }
-                }
-            }) { Text("Saved connection") }
-            OutlinedButton(enabled = !credentialBusy && transfer == null, onClick = {
-                credentialBusy = true
-                scope.launch {
-                    try { credentials.forget(); status = "Saved connection removed" }
-                    catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { status = "Could not remove saved connection" }
-                    finally { credentialBusy = false }
-                }
-            }) { Text("Forget saved") }
-        }
-        if (server == null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(enabled = transfer == null && !resolving, onClick = { discovering = !discovering }) {
-                Text(if (discovering) "Stop discovery" else "Find SMB servers")
-            }
-            if (discoveredHost.isNotEmpty()) Text("Selected: $discoveredHost · use Connect")
-        }
-        if (server == null && services.isNotEmpty()) LazyColumn(Modifier.heightIn(max = 120.dp)) {
-            items(services, key = { it.name }) { service ->
-                Button(enabled = !resolving && transfer == null, onClick = {
-                    resolving = true
-                    scope.launch {
-                        try { discoveredHost = withTimeout(10000) { resolveSmb(context, service) }; status = "Server selected; enter share and credentials" }
-                        catch (e: TimeoutCancellationException) { status = "Server resolution timed out" }
-                        catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { status = "Server resolution failed" }
-                        finally { resolving = false }
-                    }
-                }) { Text(service.name) }
-            }
-        }
-        Text(
-            server?.let { (listOf(it.host, it.share) + path).joinToString(" / ") }
-                ?: "Connect to a shared folder on your local network.",
-            style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis
-        )
-        status?.let { Text(it) }
-        if (transfer != null) Button(onClick = { transfer?.cancel() }) { Text("Cancel transfer") }
-        if (loading) Text("Connecting…")
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (server != null && !loading && error == null && entries.isEmpty()) Text("This share folder is empty.")
-        if (entries.isNotEmpty()) Text("Press OK to open. Hold OK for file actions.")
-        val focusBorder = Border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), shape = VireoCardShape)
-        LazyColumn(Modifier.weight(1f).focusRestorer(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(entries, key = { it.name }, contentType = { if (it.directory) "folder" else "file" }) { entry ->
-                val mime = mediaMime(entry.name)
-                val video = mime.startsWith("video/")
-                val audio = mime.startsWith("audio/")
-                val image = mime.startsWith("image/")
-                val playable = !entry.directory && (video || audio)
-                val viewableImage = !entry.directory && image
-                val remotePath = (path + entry.name).joinToString("\\")
-                val entryAvailable = server != null && !loading && transfer == null
-                val canDownload = entryAvailable && pending == null && entry.bytes >= 0
-                fun download() {
-                    pending = remotePath to entry
-                    try { destination.launch(entry.name) }
-                    catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
-                }
-                DenseListItem(
+            if (server == null) {
+                ExplorerOption(
                     selected = false,
-                    enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = ListItemDefaults.shape(VireoCardShape),
-                    border = ListItemDefaults.border(focusedBorder = focusBorder, focusedSelectedBorder = focusBorder),
-                    scale = ListItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f),
+                    enabled = !credentialBusy && transfer == null,
                     onClick = {
-                        when {
-                            entry.directory -> path = path + entry.name
-                            playable -> playback = remotePath to entry
-                            viewableImage -> imageViewing = remotePath to entry
-                            else -> download()
+                        credentialBusy = true
+                        scope.launch {
+                            try { credentials.forget(); status = "Saved connection removed" }
+                            catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { status = "Could not remove saved connection" }
+                            finally { credentialBusy = false }
+                        }
+                    }
+                ) {
+                    Text(stringResource(R.string.smb_forget))
+                }
+            }
+        }
+
+        if (server != null) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ExplorerOption(
+                    selected = false,
+                    enabled = !loading && transfer == null,
+                    onClick = { newFolderDialog = true },
+                    leadingIcon = { ExplorerIcon(R.drawable.symbol_folder) }
+                ) {
+                    Text(stringResource(R.string.explorer_new_folder))
+                }
+                ExplorerOption(
+                    selected = false,
+                    enabled = !loading && transfer == null && pending == null,
+                    onClick = {
+                        try { upload.launch(arrayOf("*/*")) }
+                        catch (_: Exception) { status = "System file picker unavailable" }
+                    },
+                    leadingIcon = { ExplorerIcon(R.drawable.symbol_swap_horiz) }
+                ) {
+                    Text(stringResource(R.string.smb_upload))
+                }
+                ExplorerOption(
+                    selected = false,
+                    enabled = !loading && transfer == null && !credentialBusy,
+                    onClick = {
+                        val snapshot = SmbEndpoint(server.host, server.share, server.user, server.domain, server.password.copyOf())
+                        credentialBusy = true
+                        scope.launch {
+                            try { credentials.save(snapshot); status = "Connection saved encrypted" }
+                            catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { status = "Could not save credentials" }
+                            finally { snapshot.password.fill('\u0000'); credentialBusy = false }
                         }
                     },
-                    onLongClick = if (entryAvailable) ({ actionTarget = entry }) else null,
-                    headlineContent = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    leadingContent = {
-                        ExplorerIcon(when {
-                            entry.directory -> R.drawable.symbol_folder
-                            video -> R.drawable.symbol_movie
-                            audio -> R.drawable.symbol_music_note
-                            image -> R.drawable.symbol_image
-                            else -> R.drawable.symbol_description
-                        })
-                    },
-                    trailingContent = if (!entry.directory && entry.bytes >= 0) {
-                        { Text(android.text.format.Formatter.formatFileSize(context, entry.bytes)) }
+                    leadingIcon = { ExplorerIcon(R.drawable.symbol_star) }
+                ) {
+                    Text(stringResource(R.string.smb_remember))
+                }
+                ExplorerOption(
+                    selected = false,
+                    enabled = !loading && transfer == null,
+                    onClick = { refresh++ }
+                ) {
+                    Text(stringResource(R.string.explorer_refresh))
+                }
+                ExplorerOption(
+                    selected = false,
+                    enabled = !loading && transfer == null,
+                    onClick = { showConnectDialog = true },
+                    leadingIcon = { ExplorerIcon(R.drawable.symbol_lan) }
+                ) {
+                    Text(stringResource(R.string.smb_connect_card_title))
+                }
+            }
+        }
+
+        status?.let { Text(it, color = colors.primary, style = MaterialTheme.typography.bodyMedium) }
+        error?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodyMedium) }
+        if (transfer != null) {
+            ExplorerOption(selected = false, onClick = { transfer?.cancel() }) {
+                Text(stringResource(R.string.explorer_cancel_transfer))
+            }
+        }
+        if (loading) Text(stringResource(R.string.explorer_working), color = colors.onSurfaceVariant)
+
+        if (server == null) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
+            ) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Card(
+                            onClick = { showConnectDialog = true },
+                            modifier = Modifier.weight(1f).focusRequester(primaryFocus),
+                            shape = CardDefaults.shape(VireoCardShape),
+                            colors = CardDefaults.colors(
+                                containerColor = colors.surface,
+                                contentColor = colors.onSurface,
+                                focusedContainerColor = colors.primaryContainer,
+                                focusedContentColor = colors.onPrimaryContainer
+                            ),
+                            border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                            scale = CardDefaults.scale(focusedScale = 1.02f)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    ExplorerIcon(R.drawable.symbol_lan)
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        stringResource(R.string.smb_connect_card_title),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        stringResource(R.string.smb_connect_card_subtitle),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        Card(
+                            onClick = {
+                                if (!credentialBusy && transfer == null) {
+                                    credentialBusy = true
+                                    scope.launch {
+                                        try {
+                                            val saved = credentials.load()
+                                            if (saved == null) status = "No saved SMB connection found"
+                                            else { endpoint = saved; path = emptyList(); status = null; discovering = false }
+                                        } catch (e: CancellationException) { throw e }
+                                        catch (_: Exception) { status = "Saved credentials unavailable; forget and reconnect" }
+                                        finally { credentialBusy = false }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = CardDefaults.shape(VireoCardShape),
+                            colors = CardDefaults.colors(
+                                containerColor = colors.surface,
+                                contentColor = colors.onSurface,
+                                focusedContainerColor = colors.primaryContainer,
+                                focusedContentColor = colors.onPrimaryContainer
+                            ),
+                            border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                            scale = CardDefaults.scale(focusedScale = 1.02f)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    ExplorerIcon(R.drawable.symbol_star)
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        stringResource(R.string.smb_saved_card_title),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        stringResource(R.string.smb_saved_card_subtitle),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Card(
+                        onClick = { if (transfer == null && !resolving) discovering = !discovering },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = CardDefaults.shape(VireoCardShape),
+                        colors = CardDefaults.colors(
+                            containerColor = colors.surface,
+                            contentColor = colors.onSurface,
+                            focusedContainerColor = colors.primaryContainer,
+                            focusedContentColor = colors.onPrimaryContainer
+                        ),
+                        border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                        scale = CardDefaults.scale(focusedScale = 1.01f)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(20.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                ExplorerIcon(R.drawable.symbol_search)
+                            }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    if (discovering) stringResource(R.string.smb_discover_stop)
+                                    else stringResource(R.string.smb_discover_card_title),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    stringResource(R.string.smb_discover_card_subtitle),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (services.isNotEmpty()) {
+                    item {
+                        Text(
+                            stringResource(R.string.smb_discovered_servers, services.size),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    items(services, key = { it.name }) { service ->
+                        ListItem(
+                            selected = discoveredHost.isNotEmpty() && service.name.contains(discoveredHost, ignoreCase = true),
+                            enabled = !resolving && transfer == null,
+                            onClick = {
+                                resolving = true
+                                scope.launch {
+                                    try {
+                                        discoveredHost = withTimeout(10000) { resolveSmb(context, service) }
+                                        showConnectDialog = true
+                                    } catch (_: TimeoutCancellationException) {
+                                        status = "Server resolution timed out"
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        status = "Server resolution failed"
+                                    } finally {
+                                        resolving = false
+                                    }
+                                }
+                            },
+                            leadingContent = {
+                                Box(
+                                    Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    ExplorerIcon(R.drawable.symbol_lan)
+                                }
+                            },
+                            headlineContent = {
+                                Text(service.name, style = MaterialTheme.typography.titleMedium)
+                            },
+                            supportingContent = {
+                                Text("SMB2 / SMB3 (_smb._tcp)", color = colors.onSurfaceVariant)
+                            },
+                            shape = ListItemDefaults.shape(VireoCardShape),
+                            border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                        )
+                    }
+                }
+            }
+        } else {
+            if (!loading && error == null && entries.isEmpty()) {
+                Text(stringResource(R.string.smb_empty_share), color = colors.onSurfaceVariant)
+            }
+            LazyColumn(
+                Modifier.weight(1f).focusRestorer(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items(entries, key = { it.name }, contentType = { if (it.directory) "folder" else "file" }) { entry ->
+                    val mime = mediaMime(entry.name)
+                    val video = mime.startsWith("video/")
+                    val audio = mime.startsWith("audio/")
+                    val image = mime.startsWith("image/")
+                    val playable = !entry.directory && (video || audio)
+                    val viewableImage = !entry.directory && image
+                    val remotePath = (path + entry.name).joinToString("\\")
+                    val entryAvailable = !loading && transfer == null
+                    val canDownload = entryAvailable && pending == null && entry.bytes >= 0
+                    val sizeText = if (!entry.directory && entry.bytes >= 0) {
+                        Formatter.formatFileSize(context, entry.bytes)
                     } else null
-                )
+                    val extLabel = if (entry.directory) folderTypeLabel else {
+                        val ext = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
+                        if (ext.isNotEmpty() && ext.length <= 8) ext else "FILE"
+                    }
+                    val subtitle = if (sizeText != null) "$extLabel · $sizeText" else extLabel
+
+                    fun download() {
+                        pending = remotePath to entry
+                        try { destination.launch(entry.name) }
+                        catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
+                    }
+
+                    ListItem(
+                        selected = false,
+                        enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = ListItemDefaults.shape(VireoCardShape),
+                        colors = ListItemDefaults.colors(
+                            containerColor = colors.surface,
+                            contentColor = colors.onSurface,
+                            focusedContainerColor = colors.surfaceVariant,
+                            focusedContentColor = colors.onSurface
+                        ),
+                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                        scale = ListItemDefaults.scale(focusedScale = 1.01f),
+                        onClick = {
+                            when {
+                                entry.directory -> path = path + entry.name
+                                playable -> playback = remotePath to entry
+                                viewableImage -> imageViewing = remotePath to entry
+                                else -> download()
+                            }
+                        },
+                        onLongClick = if (entryAvailable) ({ actionTarget = entry }) else null,
+                        headlineContent = {
+                            Text(
+                                entry.name,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                subtitle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        },
+                        leadingContent = {
+                            Box(
+                                Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                ExplorerIcon(
+                                    when {
+                                        entry.directory -> R.drawable.symbol_folder
+                                        video -> R.drawable.symbol_movie
+                                        audio -> R.drawable.symbol_music_note
+                                        image -> R.drawable.symbol_image
+                                        else -> R.drawable.symbol_description
+                                    }
+                                )
+                            }
+                        },
+                        trailingContent = sizeText?.let {
+                            { Text(it, style = MaterialTheme.typography.labelLarge, color = colors.primary) }
+                        }
+                    )
+                }
             }
         }
     }
@@ -678,7 +973,7 @@ private fun SmbConnectDialog(
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("Connect SMB", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.smb_connect_card_title), style = MaterialTheme.typography.titleLarge)
                 TvTextField(
                     state = hostState,
                     label = "Server host or IP",
@@ -712,7 +1007,9 @@ private fun SmbConnectDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
                 ) {
-                    OutlinedButton(onClick = { passwordState.clearText(); onDismiss() }) { Text("Cancel") }
+                    OutlinedButton(onClick = { passwordState.clearText(); onDismiss() }) {
+                        Text(stringResource(R.string.explorer_back))
+                    }
                     Button(onClick = ::submit) { Text("Connect") }
                 }
             }

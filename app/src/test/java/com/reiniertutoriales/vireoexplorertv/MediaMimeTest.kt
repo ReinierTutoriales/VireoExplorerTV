@@ -9,4 +9,11 @@ class MediaMimeTest {
         assertEquals("audio/mp4", mediaMime("track.mp4", "audio/mp4"))
         assertEquals("application/zip", mediaMime("archive.zip", "application/zip"))
     }
+    @Test fun inferredMimeTypes() {
+        assertEquals("video/x-matroska", inferFileMime("Film.MKV"))
+        assertEquals("audio/flac", inferFileMime("Song.flac"))
+        assertEquals("image/png", inferFileMime("Screen.PNG"))
+        assertEquals("application/zip", inferFileMime("archive.zip"))
+        assertEquals("application/vnd.android.package-archive", inferFileMime("app.apk"))
+    }
 }

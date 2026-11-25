@@ -139,6 +139,14 @@ internal class ExplorerModel(application: Application, private val savedState: S
         return try {
             val restored = uris.map(Uri::parse)
             val root = restored.first()
+            if (root.scheme == "file") {
+                if (!hasDirectStorageAccess(application)) return emptyList()
+                val rootFile = java.io.File(root.path ?: return emptyList())
+                if (!rootFile.exists() || restored.any { it.scheme != "file" || !(java.io.File(it.path ?: "").exists()) }) {
+                    return emptyList()
+                }
+                return restored.zip(labels)
+            }
             val grants = application.contentResolver.persistedUriPermissions
             val storage = Storage(application.contentResolver)
             if (grants.none { it.isReadPermission && storage.root(it.uri) == root }) return emptyList()
