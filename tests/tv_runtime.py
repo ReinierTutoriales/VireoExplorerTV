@@ -82,7 +82,7 @@ class Tv:
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds", "")))
         return (x1 + x2) // 2, (y1 + y2) // 2
 
-    def select(self, label, long=False):
+    def select(self, label, long=False, strict=False):
         attempts = set()
         for _ in range(10):
             tree = self.tree()
@@ -105,8 +105,8 @@ class Tv:
                     break
             else:
                 break
-        if long:
-            raise AssertionError(f"Cannot reach {label!r} using D-pad for long press")
+        if long or strict:
+            raise AssertionError(f"Cannot reach {label!r} using D-pad (long={long})")
         print(f"Touch fallback for {label!r}; not a D-pad pass", flush=True)
         self.tap(self.text(label))
 
@@ -329,26 +329,35 @@ def media_playback(tv, label):
 
 
 def video_playback(tv, label):
-    tv.select("vireo-video.mp4")
-    # Pause via the media key before the four-second overlay timeout.
+    tv.select("vireo-video.mp4", strict=True)
     tv.text("Pause")
     tv.key("MEDIA_PAUSE")
     tv.text("Play")
-    tv.select("Info")
+    tv.select("Info", strict=True)
     tv.text("Video rendered")
-    tv.select("Info")
-    tv.select("Subtitles")
-    tv.find(lambda n: "vireo-video.srt" in (n.get("text") or ""), "sidecar subtitle track")
-    track = tv.find(lambda n: "vireo-video.srt" in (n.get("text") or ""), "sidecar subtitle track")
-    tv.tap(track)
-    tv.select("Info")
+    tv.select("Info", strict=True)
+    tv.select("Subtitles", strict=True)
+    tv.text("Close tracks", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.text("Subtitles off", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.find(lambda n: "vireo-video.srt" in (n.get("text") or ""),
+            "focused sidecar subtitle track", focused=True)
+    tv.key("DPAD_CENTER")
+    tv.text("Play", focused=True)
+    tv.select("Info", strict=True)
+    tv.find(lambda n: (n.get("text") or "").startswith("✓ application/x-media3-cues"),
+            "selected subtitle track")
+    tv.key("MEDIA_PLAY")
     tv.text("Subtitle cue active")
-    tv.select("Info")
-    tv.select("Fit")
+    tv.key("MEDIA_PAUSE")
+    tv.text("Play")
+    tv.select("Info", strict=True)
+    tv.select("Fit", strict=True)
     tv.text("Zoom")
-    tv.select("Zoom")
+    tv.select("Zoom", strict=True)
     tv.text("Stretch")
-    tv.select("Stretch")
+    tv.select("Stretch", strict=True)
     tv.text("Fit")
     tv.key("MEDIA_PLAY")
     tv.text("Pause")

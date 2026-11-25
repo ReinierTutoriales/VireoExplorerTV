@@ -243,17 +243,16 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             else -> closeFocus.requestFocus()
         }
     }
-    LaunchedEffect(trackType) {
-        if (trackType == C.TRACK_TYPE_UNKNOWN) return@LaunchedEffect
-        tracksFocus.requestFocus()
+    LaunchedEffect(trackType, player, controlsVisible) {
+        if (trackType != C.TRACK_TYPE_UNKNOWN && player != null && controlsVisible) tracksFocus.requestFocus()
     }
     LaunchedEffect(error, subtitleError, buffering) {
         if (error != null || subtitleError != null || buffering) controlsVisible = true
     }
     BackHandler {
         if (subtitleError != null) subtitleError = null
-        else if (showInfo) showInfo = false
         else if (trackType != C.TRACK_TYPE_UNKNOWN) { trackType = C.TRACK_TYPE_UNKNOWN; controlsFocus.requestFocus() }
+        else if (showInfo) showInfo = false
         else if (video && controlsVisible && error == null && playing) controlsVisible = false
         else onClose()
     }
@@ -394,7 +393,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                             Button(onClick = {
                                 p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(group.type, false).setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i)).build()
                                 trackType = C.TRACK_TYPE_UNKNOWN
-                        controlsFocus.requestFocus()
+                                controlsFocus.requestFocus()
                             }) { Text((if (group.isTrackSelected(i)) "✓ " else "") + (format.label ?: format.language ?: "Track ${i + 1}")) }
                         }
                     }
@@ -422,14 +421,14 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 Text(speeds[speedIndex].toString() + "×")
             }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO },
-                onClick = { trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
+                onClick = { showInfo = false; trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT },
-                onClick = { trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
+                onClick = { showInfo = false; trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT },
                 onClick = { captionSize = (captionSize + 1) % captionFractions.size }) {
                 Text("CC " + listOf("S", "M", "L")[captionSize])
             }
-            OutlinedButton(onClick = { showInfo = !showInfo }) { Text("Info") }
+            OutlinedButton(onClick = { trackType = C.TRACK_TYPE_UNKNOWN; showInfo = !showInfo }) { Text("Info") }
             OutlinedButton(enabled = p != null, onClick = {
                 try { picker.launch(arrayOf("*/*")) }
                 catch (_: Exception) { subtitleError = "Subtitle picker unavailable" }

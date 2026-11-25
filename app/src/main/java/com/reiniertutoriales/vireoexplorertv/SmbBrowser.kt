@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -226,6 +227,9 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     val server = endpoint
     val activeSession = session
     val primaryFocus = remember { FocusRequester() }
+    val returnFocus = remember { FocusRequester() }
+    val listingState = rememberLazyListState()
+    var returnName by remember { mutableStateOf<String?>(null) }
 
     val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val request = pending
@@ -269,7 +273,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     fun back() {
         if (transfer != null) return
         when {
-            path.isNotEmpty() -> path = path.dropLast(1)
+            path.isNotEmpty() -> { returnName = null; path = path.dropLast(1) }
             server != null -> { endpoint = null; status = null }
             else -> onClose()
         }
@@ -310,7 +314,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             Entry(uri, media.second.name, mime, media.second.bytes, 0),
             factory,
             sidecars = remoteSidecars.map { it.first },
-            onClose = { playback = null }
+            onClose = { returnName = media.second.name; playback = null }
         )
         return
     }
@@ -336,7 +340,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                 val remotePath = allowedImageMap[item.uri] ?: imageTarget.first
                 openSmbInputStream(activeSession, remotePath)
             },
-            onClose = { imageViewing = null }
+            onClose = { returnName = imageTarget.second.name; imageViewing = null }
         )
         return
     }
@@ -345,6 +349,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         SmbConnectDialog(
             initialHost = discoveredHost,
             onConnect = { newEndpoint ->
+                returnName = null
                 endpoint = newEndpoint
                 path = emptyList()
                 status = null
@@ -489,7 +494,19 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
     val folderTypeLabel = stringResource(R.string.explorer_type_folder)
 
-    LaunchedEffect(server, path) { primaryFocus.requestFocus() }
+    LaunchedEffect(server, path, entries, returnName, loading, transfer) {
+        if (server == null) {
+            returnName = null
+            primaryFocus.requestFocus()
+        } else if (!loading && transfer == null) {
+            val index = entries.indexOfFirst { it.name == returnName }
+            if (index >= 0) listingState.scrollToItem(index)
+            else {
+                returnName = null
+                primaryFocus.requestFocus()
+            }
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp),
@@ -500,8 +517,8 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            ExplorerOption(
-                selected = false,
+            OutlinedButton(
+                modifier = if (server != null) Modifier.focusRequester(primaryFocus) else Modifier,
                 enabled = transfer == null,
                 onClick = { back() }
             ) {
@@ -818,6 +835,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             }
             LazyColumn(
                 Modifier.weight(1f).focusRestorer(),
+                state = listingState,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
@@ -846,10 +864,16 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         catch (_: Exception) { pending = null; status = "System destination picker unavailable" }
                     }
 
+                    val restoring = entry.name == returnName && entryAvailable
+                    LaunchedEffect(restoring) {
+                        if (restoring) {
+                            returnFocus.requestFocus()
+                        }
+                    }
                     ListItem(
                         selected = false,
                         enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().then(if (restoring) Modifier.focusRequester(returnFocus) else Modifier),
                         shape = ListItemDefaults.shape(VireoCardShape),
                         colors = ListItemDefaults.colors(
                             containerColor = colors.surface,
@@ -861,7 +885,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         scale = ListItemDefaults.scale(focusedScale = 1.01f),
                         onClick = {
                             when {
-                                entry.directory -> path = path + entry.name
+                                entry.directory -> { returnName = null; path = path + entry.name }
                                 playable -> playback = remotePath to entry
                                 viewableImage -> imageViewing = remotePath to entry
                                 else -> download()
