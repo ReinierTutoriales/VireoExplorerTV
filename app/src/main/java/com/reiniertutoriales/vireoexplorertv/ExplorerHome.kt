@@ -151,9 +151,9 @@ internal fun ExplorerHome(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    "VireoExplorerTV",
+                    stringResource(page.label),
                     Modifier.weight(1f),
-                    color = colors.primary,
+                    color = colors.onSurface,
                     style = MaterialTheme.typography.headlineMedium
                 )
                 IconButton(onClick = onSearch) {
@@ -250,7 +250,7 @@ private fun ExplorerTile(
     onClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val shape = VireoCardShape
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
     Card(
         onClick = onClick,
         modifier = modifier,
@@ -265,28 +265,27 @@ private fun ExplorerTile(
         ),
         scale = CardDefaults.scale(focusedScale = 1.05f),
         border = CardDefaults.border(
-            border = Border(BorderStroke(1.dp, colors.borderVariant), shape = shape),
+            border = Border.None,
             focusedBorder = Border(BorderStroke(3.dp, colors.primary), shape = shape)
         )
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = if (compact) 76.dp else 96.dp)
+                .heightIn(min = if (compact) 64.dp else 80.dp)
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 Modifier
-                    .size(if (compact) 42.dp else 48.dp)
-                    .background(colors.surfaceVariant, VireoPillShape),
+                    .size(if (compact) 34.dp else 44.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     painterResource(icon),
                     contentDescription = null,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(if (compact) 28.dp else 36.dp),
                     tint = colors.primary
                 )
             }

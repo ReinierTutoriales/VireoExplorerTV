@@ -1134,7 +1134,7 @@ class MainActivity : ComponentActivity() {
                         Text(
                             model.path.last().second,
                             style = MaterialTheme.typography.headlineSmall,
-                            color = colors.primary,
+                            color = colors.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1406,7 +1406,7 @@ class MainActivity : ComponentActivity() {
                 if (gridView) {
                     LazyVerticalGrid(
                         state = gridState,
-                        columns = GridCells.Adaptive(176.dp),
+                        columns = GridCells.Adaptive(136.dp),
                         modifier = Modifier.weight(1f).focusRestorer(),
                         contentPadding = padding,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
