@@ -541,16 +541,19 @@ class Storage(private val resolver: ContentResolver) {
         requireGrant(sourceParent, true)
         requireGrant(destination, true)
         if (isFileUri(entry.uri) && isFileUri(destination)) {
+            val current = revalidate(entry)
+            check(current.flags and D.Document.FLAG_SUPPORTS_MOVE != 0) { "Folder move permission unavailable" }
             val srcFile = toFile(entry.uri)
+            check(srcFile.parentFile?.canonicalFile == toFile(sourceParent).canonicalFile) { "Source folder changed" }
             val dstDir = toFile(destination)
             check(srcFile.parentFile?.canonicalFile != dstDir.canonicalFile) { "Already in destination" }
             check(!isSameOrDescendantFile(srcFile, dstDir)) { "Cannot move into itself or descendant" }
             val target = File(dstDir, entry.name)
             check(!target.exists()) { "Destination already exists" }
             coroutineContext.ensureActive()
-            if (srcFile.renameTo(target)) return@withContext Uri.fromFile(target)
-            copyDirectory(entry, destination, entry.name) {}
-            check(srcFile.deleteRecursively()) { "Could not remove original folder after move" }
+            check(srcFile.renameTo(target)) {
+                "This folder cannot be moved directly. Copy it to the destination and review the copy before removing the original."
+            }
             return@withContext Uri.fromFile(target)
         }
         check(entry.uri.authority == destination.authority && D.getTreeDocumentId(entry.uri) == D.getTreeDocumentId(destination)) { "Folder move requires the same storage grant" }
@@ -622,8 +625,10 @@ class Storage(private val resolver: ContentResolver) {
         requireGrant(entry.uri, move)
         requireGrant(parent, true)
         require(!entry.directory && validName(entry.name) && validName(destinationName))
-        if (move) check(entry.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
+        val current = revalidate(entry)
+        if (move) check(current.flags and D.Document.FLAG_SUPPORTS_DELETE != 0)
         check(!hasChildNamed(parent, destinationName)) { "Destination already exists" }
+        coroutineContext.ensureActive()
         if (move && isFileUri(entry.uri) && isFileUri(parent)) {
             val src = toFile(entry.uri)
             val dst = File(toFile(parent), destinationName)

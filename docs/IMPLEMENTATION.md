@@ -177,3 +177,11 @@ References: [Android coroutine dispatchers](https://developer.android.com/kotlin
   - Redesigned `AppManager` ("Limpiador y espacio") and `StorageAnalysis` ("Analizador de almacenamiento") with an internal storage usage card + `VireoProgressBar`, direct one-click internal storage scanning, own app cache cleanup, pill filter tabs (`Limpieza`, `Más pesados`, `Duplicados`), and structured TV Material `ListItem` rows.
 - Release packaging (`.github/workflows/build.yml`, `app/build.gradle.kts`): configured R8-minified `release` build signing with the standard debug key for direct sideloading and added `VireoExplorerTV-release` artifact upload in CI.
 
+
+## Follow-up review of direct storage and listing concurrency
+
+Reviewed from a9fc7c2. Returning to an already-computed listing or the default ordering now cancels and invalidates pending asynchronous work. Failed folder reads also invalidate the pending listing.
+
+Direct file moves revalidate the source before attempting a filesystem rename and check cancellation before mutation. Direct folder moves verify the source parent and current move capability. If rename fails, the operation reports an error and preserves the source. The former copy-then-recursive-delete fallback could remove files added or modified during the copy. Cross-filesystem folder moves require verified source snapshots before automatic deletion can be supported.
+
+Saved local folders now match the internal-storage root using a complete directory boundary. Direct-path APK installation and handoff to external viewers remain incomplete and need content URIs with scoped grants. No runtime or performance acceptance is claimed by this source review.

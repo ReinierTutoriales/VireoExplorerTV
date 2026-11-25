@@ -280,7 +280,7 @@ class MainActivity : ComponentActivity() {
                     val targetFile = File(uri.path ?: return)
                     if (!targetFile.exists()) { model.error = "Saved folder unavailable"; return }
                     val rootDir = primaryDirectStorageDir()
-                    model.path = if (rootDir != null && targetFile.canonicalPath.startsWith(rootDir.canonicalPath) && targetFile.canonicalPath != rootDir.canonicalPath) {
+                    model.path = if (rootDir != null && targetFile.canonicalPath.startsWith(rootDir.canonicalPath.trimEnd(File.separatorChar) + File.separator) && targetFile.canonicalPath != rootDir.canonicalPath) {
                         listOf(
                             Uri.fromFile(rootDir) to getString(R.string.explorer_internal),
                             Uri.fromFile(targetFile) to targetFile.name
