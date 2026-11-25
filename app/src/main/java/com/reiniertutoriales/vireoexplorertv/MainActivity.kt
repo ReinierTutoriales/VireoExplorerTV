@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -1050,292 +1051,346 @@ class MainActivity : ComponentActivity() {
         }
 
         val isFavorite = parent.toString() in settings.favorites
-
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        var focusedUri by remember(parent) { mutableStateOf<Uri?>(null) }
+        var showFolderTools by remember(parent) { mutableStateOf(false) }
+        val focusedEntry = visible.firstOrNull { it.uri == focusedUri } ?: visible.firstOrNull()
+        val detailsReady = !model.mutating && !model.busy && !listingPending && !model.multi
+        val moveSupported = focusedEntry?.let {
+            writable && it.flags and (if (it.directory) DocumentsContract.Document.FLAG_SUPPORTS_MOVE
+                else DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0
+        } == true
+        FolderWorkspace(
+            enabled = !model.mutating,
+            onNavigate = { destination ->
+                model.selected = null
+                model.multi = false
+                model.marked = emptySet()
+                model.path = emptyList()
+                navigate(destination)
+            },
+            details = {
+                FolderDetails(
+                    entry = focusedEntry,
+                    revision = model.revision,
+                    enabled = detailsReady,
+                    canMove = moveSupported,
+                    onOpen = { focusedEntry?.let(::openEntry) },
+                    onCopy = { focusedEntry?.let { model.clipboard = listOf(it) to false } },
+                    onMove = {
+                        focusedEntry?.let {
+                            model.clipboardParent = parent
+                            model.clipboard = listOf(it) to true
+                        }
+                    },
+                    onMore = { focusedEntry?.let { model.selected = it } }
+                )
+            }
         ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Column(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedButton(
-                    modifier = Modifier.focusRequester(primaryFocus),
-                    enabled = !model.mutating,
-                    onClick = ::backFromFolder
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(stringResource(R.string.explorer_back))
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        model.path.last().second,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colors.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val breadcrumb = buildString {
-                        if (model.path.size > 1) {
-                            append(model.path.dropLast(1).joinToString(" / ") { it.second })
-                        }
-                        model.freeBytes?.let { free ->
-                            if (isNotEmpty()) append(" · ")
-                            append(Formatter.formatFileSize(this@MainActivity, free))
-                            append(" free")
-                        }
+                    OutlinedButton(
+                        modifier = Modifier.focusRequester(primaryFocus),
+                        enabled = !model.mutating,
+                        onClick = ::backFromFolder
+                    ) {
+                        Text(stringResource(R.string.explorer_back))
                     }
-                    if (breadcrumb.isNotEmpty()) {
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            breadcrumb,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
+                            model.path.last().second,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = colors.primary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        val breadcrumb = buildString {
+                            if (model.path.size > 1) {
+                                append(model.path.dropLast(1).joinToString(" / ") { it.second })
+                            }
+                            model.freeBytes?.let { free ->
+                                if (isNotEmpty()) append(" · ")
+                                append(Formatter.formatFileSize(this@MainActivity, free))
+                                append(" free")
+                            }
+                        }
+                        if (breadcrumb.isNotEmpty()) {
+                            Text(
+                                breadcrumb,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-                }
-                IconButton(
-                    enabled = !model.mutating,
-                    onClick = { showFolderSearchDialog = true }
-                ) {
-                    ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
-                }
-            }
-
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ExplorerOption(
-                    selected = false,
-                    enabled = !model.mutating,
-                    onClick = { updateSettings { preferences.nextSort() } }
-                ) {
-                    Text(sortLabels[sortIndex])
-                }
-                ExplorerOption(
-                    selected = gridView,
-                    enabled = !model.mutating,
-                    onClick = { updateSettings { preferences.toggleGrid() } }
-                ) {
-                    Text(stringResource(if (gridView) R.string.explorer_grid else R.string.explorer_list))
-                }
-                if (writable) {
-                    ExplorerOption(
-                        selected = false,
-                        enabled = !model.mutating && !model.busy,
-                        onClick = { showNewFolderDialog = true },
-                        leadingIcon = { ExplorerIcon(R.drawable.symbol_folder) }
+                    IconButton(
+                        enabled = !model.mutating,
+                        onClick = { showFolderSearchDialog = true }
                     ) {
-                        Text(stringResource(R.string.explorer_new_folder))
+                        ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
+                    }
+                    IconButton(enabled = !model.mutating, onClick = { showFolderTools = !showFolderTools }) {
+                        ExplorerIcon(R.drawable.symbol_settings, description = stringResource(R.string.explorer_folder_tools))
                     }
                 }
-                ExplorerOption(
-                    selected = model.multi,
-                    enabled = !model.mutating && !model.busy,
-                    onClick = {
-                        model.multi = !model.multi
-                        model.marked = emptySet()
-                    }
-                ) {
-                    Text(stringResource(if (model.multi) R.string.explorer_cancel_selection else R.string.explorer_select_multiple))
-                }
-                ExplorerOption(
-                    selected = isFavorite,
-                    enabled = !model.mutating,
-                    onClick = { updateSettings { preferences.toggleFavorite(parent.toString()) } },
-                    leadingIcon = { ExplorerIcon(R.drawable.symbol_star) }
-                ) {
-                    Text(stringResource(R.string.explorer_favorites))
-                }
-                ExplorerOption(
-                    selected = false,
-                    enabled = !model.mutating && !model.busy,
-                    onClick = { model.scanOpen = true },
-                    leadingIcon = { ExplorerIcon(R.drawable.symbol_cleaning_services) }
-                ) {
-                    Text(stringResource(R.string.explorer_analyze_folder))
-                }
-                ExplorerOption(
-                    selected = false,
-                    enabled = !model.mutating,
-                    onClick = { model.error = null; model.revision++ }
-                ) {
-                    Text(stringResource(R.string.explorer_refresh))
-                }
-            }
 
-            if (category != null || homeSearch.isNotEmpty() || model.search.isNotEmpty()) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    category?.let { active ->
-                        ClearFilterButton(stringResource(active.label), active.icon, enabled = !model.mutating) {
-                            category = null
-                            primaryFocus.requestFocus()
-                        }
-                    }
-                    if (homeSearch.isNotEmpty()) {
-                        ClearFilterButton(homeSearch, R.drawable.symbol_search, enabled = !model.mutating) {
-                            homeSearch = ""
-                            primaryFocus.requestFocus()
-                        }
-                    }
-                    if (model.search.isNotEmpty()) {
-                        ClearFilterButton(model.search, R.drawable.symbol_search, enabled = !model.mutating) {
-                            model.search = ""
-                            primaryFocus.requestFocus()
-                        }
-                    }
-                }
-            }
-
-            model.error?.let { Text(it, color = colors.error) }
-            if (model.busy) Text(stringResource(R.string.explorer_reading_storage), color = colors.onSurfaceVariant)
-            if (model.mutating) Text(stringResource(R.string.explorer_working), color = colors.primary)
-
-            val pending = model.clipboard
-            if (pending != null) {
-                Row(
+                if (showFolderTools) Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        (if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name },
-                        color = colors.primary,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Button(enabled = writable && !model.mutating && !model.busy, onClick = { model.paste(parent) }) { Text("Paste here") }
                     ExplorerOption(
                         selected = false,
                         enabled = !model.mutating,
-                        onClick = {
-                            model.conflictPolicy = ConflictPolicy.entries[(model.conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size]
+                        onClick = { updateSettings { preferences.nextSort() } }
+                    ) {
+                        Text(sortLabels[sortIndex])
+                    }
+                    ExplorerOption(
+                        selected = gridView,
+                        enabled = !model.mutating,
+                        onClick = { updateSettings { preferences.toggleGrid() } }
+                    ) {
+                        Text(stringResource(if (gridView) R.string.explorer_grid else R.string.explorer_list))
+                    }
+                    if (writable) {
+                        ExplorerOption(
+                            selected = false,
+                            enabled = !model.mutating && !model.busy,
+                            onClick = { showNewFolderDialog = true },
+                            leadingIcon = { ExplorerIcon(R.drawable.symbol_folder) }
+                        ) {
+                            Text(stringResource(R.string.explorer_new_folder))
                         }
-                    ) { Text(model.conflictPolicy.label) }
-                    ExplorerOption(selected = false, enabled = !model.mutating, onClick = { model.clipboard = null }) { Text("Clear") }
-                }
-            }
-
-            if (model.transferJob != null) {
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val bytes by model.progress.collectAsStateWithLifecycle()
-                    Text(Formatter.formatFileSize(this@MainActivity, bytes), color = colors.primary)
-                    ExplorerOption(selected = false, onClick = { model.transferJob?.cancel() }) {
-                        Text(stringResource(R.string.explorer_cancel_transfer))
+                    }
+                    ExplorerOption(
+                        selected = model.multi,
+                        enabled = !model.mutating && !model.busy,
+                        onClick = {
+                            model.multi = !model.multi
+                            model.marked = emptySet()
+                        }
+                    ) {
+                        Text(stringResource(if (model.multi) R.string.explorer_cancel_selection else R.string.explorer_select_multiple))
+                    }
+                    ExplorerOption(
+                        selected = isFavorite,
+                        enabled = !model.mutating,
+                        onClick = { updateSettings { preferences.toggleFavorite(parent.toString()) } },
+                        leadingIcon = { ExplorerIcon(R.drawable.symbol_star) }
+                    ) {
+                        Text(stringResource(R.string.explorer_favorites))
+                    }
+                    ExplorerOption(
+                        selected = false,
+                        enabled = !model.mutating && !model.busy,
+                        onClick = { model.scanOpen = true },
+                        leadingIcon = { ExplorerIcon(R.drawable.symbol_cleaning_services) }
+                    ) {
+                        Text(stringResource(R.string.explorer_analyze_folder))
+                    }
+                    ExplorerOption(
+                        selected = false,
+                        enabled = !model.mutating,
+                        onClick = { model.error = null; model.revision++ }
+                    ) {
+                        Text(stringResource(R.string.explorer_refresh))
                     }
                 }
-            }
 
-            if (model.multi) {
-                val batch = folderEntries.filter { it.uri in model.marked }
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("${batch.size} selected", color = colors.primary, style = MaterialTheme.typography.titleSmall)
-                    ExplorerOption(
-                        selected = batch.size == visible.size && visible.isNotEmpty(),
-                        enabled = !model.mutating && !model.busy && !listingPending,
-                        onClick = {
-                            model.marked = if (batch.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
+                    ExplorerOption(selected = category == null, enabled = !model.mutating,
+                        onClick = { category = null }) { Text(stringResource(R.string.explorer_filter_all)) }
+                    listOf(FileCategory.VIDEO, FileCategory.AUDIO, FileCategory.IMAGE).forEach { filter ->
+                        ExplorerOption(selected = category == filter, enabled = !model.mutating,
+                            onClick = { category = if (category == filter) null else filter }) {
+                            Text(stringResource(filter.label))
                         }
-                    ) { Text("Select all (${visible.size})") }
-                    ExplorerOption(
-                        selected = false,
-                        enabled = !model.mutating && batch.isNotEmpty(),
-                        onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }
-                    ) { Text("Copy") }
-                    ExplorerOption(
-                        selected = false,
-                        enabled = !model.mutating && writable && batch.isNotEmpty() &&
-                            batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 },
-                        onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }
-                    ) { Text("Move") }
+                    }
                 }
-            }
+                if (category != null || homeSearch.isNotEmpty() || model.search.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        category?.let { active ->
+                            ClearFilterButton(stringResource(active.label), active.icon, enabled = !model.mutating) {
+                                category = null
+                                primaryFocus.requestFocus()
+                            }
+                        }
+                        if (homeSearch.isNotEmpty()) {
+                            ClearFilterButton(homeSearch, R.drawable.symbol_search, enabled = !model.mutating) {
+                                homeSearch = ""
+                                primaryFocus.requestFocus()
+                            }
+                        }
+                        if (model.search.isNotEmpty()) {
+                            ClearFilterButton(model.search, R.drawable.symbol_search, enabled = !model.mutating) {
+                                model.search = ""
+                                primaryFocus.requestFocus()
+                            }
+                        }
+                    }
+                }
 
-            val itemReady = !model.mutating && !model.busy && !listingPending
-            val select: (Entry) -> Unit = { entry ->
-                if (itemReady) {
-                    if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri
-                    else openEntry(entry)
-                }
-            }
-            if (!model.busy && !listingPending && visible.isEmpty() && model.error == null) {
-                Text(
-                    when {
-                        model.search.isNotEmpty() || homeSearch.isNotEmpty() -> stringResource(R.string.explorer_no_search_results)
-                        category != null -> stringResource(R.string.explorer_no_category_files)
-                        else -> stringResource(R.string.explorer_empty_folder)
-                    },
-                    color = colors.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp)
-                )
-            }
+                model.error?.let { Text(it, color = colors.error) }
+                if (model.busy) Text(stringResource(R.string.explorer_reading_storage), color = colors.onSurfaceVariant)
+                if (model.mutating) Text(stringResource(R.string.explorer_working), color = colors.primary)
 
-            val entryFocus = remember { FocusRequester() }
-            val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
-            val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
-            LaunchedEffect(parent, restoreIndex, gridView) {
-                if (restoreIndex >= 0) {
-                    if (gridView) gridState.scrollToItem(restoreIndex)
-                    else listState.scrollToItem(restoreIndex)
+                val pending = model.clipboard
+                if (pending != null) {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            (if (pending.second) "Move: " else "Copy: ") + pending.first.joinToString(limit = 2) { it.name },
+                            color = colors.primary,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Button(enabled = writable && !model.mutating && !model.busy, onClick = { model.paste(parent) }) { Text("Paste here") }
+                        ExplorerOption(
+                            selected = false,
+                            enabled = !model.mutating,
+                            onClick = {
+                                model.conflictPolicy = ConflictPolicy.entries[(model.conflictPolicy.ordinal + 1) % ConflictPolicy.entries.size]
+                            }
+                        ) { Text(model.conflictPolicy.label) }
+                        ExplorerOption(selected = false, enabled = !model.mutating, onClick = { model.clipboard = null }) { Text("Clear") }
+                    }
                 }
-            }
-            val renderEntry: @Composable (Entry) -> Unit = { entry ->
-                val restoring = entry.uri == restoreEntry
-                if (restoring) LaunchedEffect(entry.uri, model.busy, listingPending) {
-                    if (!model.busy && !listingPending && entryFocus.requestFocus()) returnEntries.remove(parent)
+
+                if (model.transferJob != null) {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val bytes by model.progress.collectAsStateWithLifecycle()
+                        Text(Formatter.formatFileSize(this@MainActivity, bytes), color = colors.primary)
+                        ExplorerOption(selected = false, onClick = { model.transferJob?.cancel() }) {
+                            Text(stringResource(R.string.explorer_cancel_transfer))
+                        }
+                    }
                 }
-                val action = if (model.multi) null else ({
+
+                if (model.multi) {
+                    val batch = folderEntries.filter { it.uri in model.marked }
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("${batch.size} selected", color = colors.primary, style = MaterialTheme.typography.titleSmall)
+                        ExplorerOption(
+                            selected = batch.size == visible.size && visible.isNotEmpty(),
+                            enabled = !model.mutating && !model.busy && !listingPending,
+                            onClick = {
+                                model.marked = if (batch.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
+                            }
+                        ) { Text("Select all (${visible.size})") }
+                        ExplorerOption(
+                            selected = false,
+                            enabled = !model.mutating && batch.isNotEmpty(),
+                            onClick = { model.clipboard = batch to false; model.multi = false; model.marked = emptySet() }
+                        ) { Text("Copy") }
+                        ExplorerOption(
+                            selected = false,
+                            enabled = !model.mutating && writable && batch.isNotEmpty() &&
+                                batch.all { if (it.directory) it.flags and DocumentsContract.Document.FLAG_SUPPORTS_MOVE != 0 else it.flags and DocumentsContract.Document.FLAG_SUPPORTS_DELETE != 0 },
+                            onClick = { model.clipboardParent = parent; model.clipboard = batch to true; model.multi = false; model.marked = emptySet() }
+                        ) { Text("Move") }
+                    }
+                }
+
+                val itemReady = !model.mutating && !model.busy && !listingPending
+                val select: (Entry) -> Unit = { entry ->
                     if (itemReady) {
-                        returnEntries[parent] = entry.uri
-                        model.selected = entry
+                        if (model.multi) model.marked = if (entry.uri in model.marked) model.marked - entry.uri else model.marked + entry.uri
+                        else openEntry(entry)
                     }
-                })
-                FolderEntry(
-                    entry = entry,
-                    revision = model.revision,
-                    grid = gridView,
-                    selected = model.multi && entry.uri in model.marked,
-                    enabled = !model.mutating,
-                    onClick = { select(entry) },
-                    onLongClick = action,
-                    modifier = Modifier.fillMaxWidth().then(
-                        if (restoring) Modifier.focusRequester(entryFocus) else Modifier
-                    )
-                )
-            }
-            val padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-            if (gridView) {
-                LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Adaptive(210.dp),
-                    modifier = Modifier.weight(1f).focusRestorer(),
-                    contentPadding = padding,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
                 }
-            } else {
-                LazyColumn(
-                    Modifier.weight(1f).focusRestorer(),
-                    state = listState,
-                    contentPadding = padding,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
+                if (!model.busy && !listingPending && visible.isEmpty() && model.error == null) {
+                    Text(
+                        when {
+                            model.search.isNotEmpty() || homeSearch.isNotEmpty() -> stringResource(R.string.explorer_no_search_results)
+                            category != null -> stringResource(R.string.explorer_no_category_files)
+                            else -> stringResource(R.string.explorer_empty_folder)
+                        },
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp)
+                    )
+                }
+
+                val entryFocus = remember { FocusRequester() }
+                val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
+                val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
+                val focusTarget = if (restoreIndex >= 0) restoreEntry else visible.firstOrNull()?.uri
+                LaunchedEffect(parent, restoreIndex, gridView) {
+                    if (restoreIndex >= 0) {
+                        if (gridView) gridState.scrollToItem(restoreIndex)
+                        else listState.scrollToItem(restoreIndex)
+                    }
+                }
+                val renderEntry: @Composable (Entry) -> Unit = { entry ->
+                    val restoring = entry.uri == focusTarget
+                    if (restoring) LaunchedEffect(entry.uri, model.busy, listingPending) {
+                        if (!model.busy && !listingPending && entryFocus.requestFocus()) returnEntries.remove(parent)
+                    }
+                    val action = if (model.multi) null else ({
+                        if (itemReady) {
+                            returnEntries[parent] = entry.uri
+                            model.selected = entry
+                        }
+                    })
+                    FolderEntry(
+                        entry = entry,
+                        revision = model.revision,
+                        grid = gridView,
+                        selected = model.multi && entry.uri in model.marked,
+                        enabled = !model.mutating,
+                        onClick = { select(entry) },
+                        onLongClick = action,
+                        modifier = Modifier.fillMaxWidth().onFocusChanged {
+                            if (it.hasFocus) focusedUri = entry.uri
+                        }.then(
+                            if (restoring) Modifier.focusRequester(entryFocus) else Modifier
+                        )
+                    )
+                }
+                val padding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                if (gridView) {
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Adaptive(176.dp),
+                        modifier = Modifier.weight(1f).focusRestorer(),
+                        contentPadding = padding,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
+                    }
+                } else {
+                    LazyColumn(
+                        Modifier.weight(1f).focusRestorer(),
+                        state = listState,
+                        contentPadding = padding,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(visible, key = { it.uri.toString() }, contentType = { if (it.directory) "folder" else "file" }) { renderEntry(it) }
+                    }
                 }
             }
         }

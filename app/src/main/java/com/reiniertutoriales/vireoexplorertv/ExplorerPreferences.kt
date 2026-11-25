@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.map
 import java.io.IOException
 
 private val Context.explorerDataStore by preferencesDataStore(name = "explorer_settings")
-internal data class ExplorerSettings(val grid: Boolean = false, val sort: Int = 0, val favorites: List<String> = emptyList(), val recent: List<String> = emptyList())
+internal data class ExplorerSettings(val grid: Boolean = true, val sort: Int = 0, val favorites: List<String> = emptyList(), val recent: List<String> = emptyList())
 
 internal class ExplorerPreferences(context: Context) {
     private val store = context.applicationContext.explorerDataStore
@@ -22,8 +22,8 @@ internal class ExplorerPreferences(context: Context) {
     private val favorites = stringPreferencesKey("favorite_folders")
     private val recent = stringPreferencesKey("recent_folders")
     val settings = store.data.catch { if (it is IOException) emit(emptyPreferences()) else throw it }
-        .map { ExplorerSettings(it[grid] ?: false, (it[sort] ?: 0).coerceIn(0, 3), decode(it[favorites]), decode(it[recent])) }
-    suspend fun toggleGrid() { store.edit { it[grid] = !(it[grid] ?: false) } }
+        .map { ExplorerSettings(it[grid] ?: true, (it[sort] ?: 0).coerceIn(0, 3), decode(it[favorites]), decode(it[recent])) }
+    suspend fun toggleGrid() { store.edit { it[grid] = !(it[grid] ?: true) } }
     suspend fun setGrid(enabled: Boolean) { store.edit { it[grid] = enabled } }
     suspend fun setSort(index: Int) { store.edit { it[sort] = index.coerceIn(0, 3) } }
     suspend fun nextSort() { store.edit { it[sort] = ((it[sort] ?: 0).coerceIn(0, 3) + 1) % 4 } }

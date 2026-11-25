@@ -121,4 +121,12 @@
     <string name="manager_settings">Información y almacenamiento</string>
     <string name="manager_launch_unavailable">Esta aplicación no tiene un acceso de inicio disponible. Usa su información para administrarla.</string>
     <string name="manager_loading">Cargando aplicaciones…</string>
+    <string name="explorer_preview_empty">Enfoca un archivo para ver sus detalles.</string>
+    <string name="explorer_preview_open">Abrir</string>
+    <string name="explorer_preview_play">Reproducir</string>
+    <string name="explorer_preview_copy">Copiar</string>
+    <string name="explorer_preview_move">Mover</string>
+    <string name="explorer_preview_more">Más opciones</string>
+    <string name="explorer_filter_all">Todo</string>
+    <string name="explorer_folder_tools">Herramientas de carpeta</string>
 </resources>

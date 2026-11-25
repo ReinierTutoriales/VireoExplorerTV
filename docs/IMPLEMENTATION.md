@@ -197,3 +197,12 @@ These changes remove identified work from the UI and inventory-loading paths. Ru
 Applications and Cleanup have separate content areas and independent scrolling. The app inventory opens directly without waiting for, or starting, a temporary-file scan. App rows load actual package icons on demand at 96 pixels, with at most two icon tasks running concurrently. The generic Android icon is retained as a fallback when package resources are unavailable. Selecting an app exposes Open application and App information and storage. Launching prefers the TV launcher, with the regular launcher as fallback and a visible message for packages without either entry point.
 
 These changes alter the app-management flow. They still require visual and remote-control acceptance on Android TV. Source compilation and unit tests do not establish visual quality or device latency.
+
+
+## File workspace implementation
+
+The folder screen now implements a left destination rail, a central file workspace, and a persistent details/action panel. Native focus on a file row or card selects the item displayed in the panel. The panel exposes the existing open/play, copy, move, and context-action flows. Direct access to sort, category, clipboard, multiselection, and folder operations remains available. Secondary folder tools are collapsed by default. Empty folders have a neutral details state.
+
+Grid tiles have full-width thumbnails and larger folder symbols. Preview requests use a distinct cache key, a bounded image size, and a cancellable delay before decoding during rapid focus traversal. New preferences default to grid while an explicitly saved view preference is retained. The UI uses real file names, MIME types and sizes. It does not fabricate durations, resolutions, or folder counts. Native decoding/provider thumbnail support determines whether an image or type icon is shown.
+
+This is repository implementation, not the generated visual concept. Pixel layout and D-pad behavior for this version still require device validation. No new APK was packaged for this change.

@@ -119,4 +119,12 @@
     <string name="manager_settings">App information and storage</string>
     <string name="manager_launch_unavailable">This app has no available launcher. Use app information to manage it.</string>
     <string name="manager_loading">Loading applications…</string>
+    <string name="explorer_preview_empty">Focus a file to see its details.</string>
+    <string name="explorer_preview_open">Open</string>
+    <string name="explorer_preview_play">Play</string>
+    <string name="explorer_preview_copy">Copy</string>
+    <string name="explorer_preview_move">Move</string>
+    <string name="explorer_preview_more">More options</string>
+    <string name="explorer_filter_all">All</string>
+    <string name="explorer_folder_tools">Folder tools</string>
 </resources>

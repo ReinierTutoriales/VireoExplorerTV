@@ -19,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -43,14 +44,21 @@ internal fun trimThumbnailCache(level: Int) {
 }
 
 @Composable
-internal fun FileThumbnail(entry: Entry, revision: Int) {
+internal fun FileThumbnail(
+    entry: Entry,
+    revision: Int,
+    modifier: Modifier = Modifier.size(80.dp, 48.dp),
+    preview: Boolean = false
+) {
     if (Build.VERSION.SDK_INT < 29 || entry.directory ||
         entry.flags and DocumentsContract.Document.FLAG_SUPPORTS_THUMBNAIL == 0) {
-        FileTypeIcon(entry)
+        FileTypeIcon(entry, modifier)
         return
     }
     val resolver = LocalContext.current.contentResolver
-    val key = remember(entry.uri, entry.size, revision) { thumbnailCacheKey(entry, revision) }
+    val key = remember(entry.uri, entry.size, revision, preview) {
+        thumbnailCacheKey(entry, revision) + if (preview) ":preview" else ":tile"
+    }
     var bitmap by remember(key) { mutableStateOf(thumbnailCache.get(key)) }
     val scope = rememberCoroutineScope()
     DisposableEffect(resolver, key) {
@@ -58,9 +66,10 @@ internal fun FileThumbnail(entry: Entry, revision: Int) {
         val job = if (bitmap == null) {
             scope.launch {
                 try {
+                    if (preview) delay(180)
                     val image = withContext(thumbnailDispatcher) {
                         thumbnailCache.get(key) ?: run {
-                            val size = Size(160, 96)
+                            val size = if (preview) Size(640, 360) else Size(320, 180)
                             val loaded = if (entry.uri.scheme == "file") {
                                 val file = File(requireNotNull(entry.uri.path))
                                 val mime = mediaMime(entry.name, entry.mime)
@@ -86,18 +95,18 @@ internal fun FileThumbnail(entry: Entry, revision: Int) {
         }
     }
     val image = bitmap
-    if (image == null) FileTypeIcon(entry)
+    if (image == null) FileTypeIcon(entry, modifier)
     else Image(
         bitmap = image.asImageBitmap(),
         contentDescription = null,
-        modifier = Modifier.size(80.dp, 48.dp),
-        contentScale = ContentScale.Fit
+        modifier = modifier,
+        contentScale = ContentScale.Crop
     )
 }
 
 @Composable
-internal fun FileTypeIcon(entry: Entry) {
+internal fun FileTypeIcon(entry: Entry, modifier: Modifier = Modifier) {
     val icon = if (entry.directory) R.drawable.symbol_folder
     else FileCategory.entries.firstOrNull { it.matches(entry) }?.icon ?: R.drawable.symbol_description
-    ExplorerIcon(icon)
+    ExplorerIcon(icon, modifier)
 }
