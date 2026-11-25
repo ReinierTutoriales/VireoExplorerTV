@@ -94,7 +94,8 @@ class Tv:
             self.key("BACK")
 
     def submit_smb(self):
-        self.dismiss_keyboard()
+        # edit() already dismisses the IME. A second Back can close the SMB dialog.
+        self.text("Server host or IP")
         for direction in ("DPAD_DOWN", "DPAD_DOWN", "DPAD_DOWN", "TAB", "TAB", "TAB", "TAB"):
             self.key(direction)
             for focused in self.tree().iter("node"):
