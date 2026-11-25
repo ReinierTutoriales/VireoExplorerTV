@@ -924,6 +924,7 @@ private fun SmbConnectDialog(
     val passwordState = rememberTextFieldState()
     var error by remember { mutableStateOf<String?>(null) }
     val hostFocus = remember { FocusRequester() }
+    val connectFocus = remember { FocusRequester() }
     val colors = MaterialTheme.colorScheme
     LaunchedEffect(Unit) { hostFocus.requestFocus() }
     LaunchedEffect(hostState, shareState) {
@@ -1000,7 +1001,8 @@ private fun SmbConnectDialog(
                     label = "Password",
                     password = true,
                     imeAction = ImeAction.Done,
-                    onDone = ::submit
+                    onDone = ::submit,
+                    downFocusRequester = connectFocus
                 )
                 error?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodyMedium) }
                 Row(
@@ -1010,7 +1012,7 @@ private fun SmbConnectDialog(
                     OutlinedButton(onClick = { passwordState.clearText(); onDismiss() }) {
                         Text(stringResource(R.string.explorer_back))
                     }
-                    Button(onClick = ::submit) { Text("Connect") }
+                    Button(onClick = ::submit, modifier = Modifier.focusRequester(connectFocus)) { Text("Connect") }
                 }
             }
         }

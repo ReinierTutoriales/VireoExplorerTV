@@ -175,7 +175,9 @@ def smb(tv, fixture, variant, user, password):
     tv.text("Server host or IP")
     for index, value in [(0, "10.0.2.2"), (1, "vireoci"), (2, user), (4, password)]:
         tv.edit(index, value)
-    tv.select("Connect")
+    tv.key("DPAD_DOWN")
+    tv.text("Connect", focused=True)
+    tv.key("DPAD_CENTER")
     tv.text("vireo-smb-fixture.txt")
     print(f"PASS {variant} authenticated SMB directory listing", flush=True)
 
