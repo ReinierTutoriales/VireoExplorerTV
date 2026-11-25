@@ -26,6 +26,33 @@ jobs:
           fi
           test -x "$sdkmanager_path"
           "$sdkmanager_path" "platforms;android-37.2"
+      - name: Verify required TV SDK images before compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager_path="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager_path" ]]; then
+            sdkmanager_path="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          fi
+          test -x "$sdkmanager_path"
+          "$sdkmanager_path" --list --channel=0 > "$RUNNER_TEMP/vireo-sdk-packages.txt"
+          python3 - "$RUNNER_TEMP/vireo-sdk-packages.txt" <<'PY'
+          import sys
+          from pathlib import Path
+          packages = {line.split("|", 1)[0].strip()
+                      for line in Path(sys.argv[1]).read_text().splitlines() if "|" in line}
+          required = {
+              "system-images;android-28;android-tv;x86",
+              "system-images;android-30;android-tv;x86",
+              "system-images;android-36;android-tv;x86_64",
+          }
+          missing = required - packages
+          if missing:
+              raise SystemExit("Unavailable stable SDK packages: " + ", ".join(sorted(missing)))
+          print("Verified stable TV SDK packages: " + ", ".join(sorted(required)))
+          PY
+      - name: Check runtime test syntax
+        run: python3 -m py_compile tests/tv_runtime.py
       - run: gradle assembleDebug testDebugUnitTest lintDebug assembleRelease --stacktrace
       - uses: actions/upload-artifact@v7
         with:
