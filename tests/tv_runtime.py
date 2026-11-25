@@ -25,6 +25,52 @@ class Tv:
     def adb(self, *args):
         return subprocess.check_output(["adb", "-s", self.serial, *args], text=True, timeout=60)
 
+    def setup_command(self, *args, timeout=10):
+        return subprocess.check_output(
+            ["adb", "-s", self.serial, *args], text=True,
+            stderr=subprocess.STDOUT, timeout=timeout)
+
+    def wait_ready(self, timeout=120):
+        deadline = time.monotonic() + timeout
+        consecutive = 0
+        last = "not ready"
+        while time.monotonic() < deadline:
+            try:
+                if (self.setup_command("get-state").strip() == "device"
+                        and self.setup_command("shell", "getprop", "sys.boot_completed").strip() == "1"
+                        and self.setup_command("shell", "pm", "path", "android").strip().startswith("package:")):
+                    consecutive += 1
+                    if consecutive >= 2:
+                        print("ADB transport, Android boot and package manager ready", flush=True)
+                        return
+                else:
+                    consecutive = 0
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                consecutive = 0
+                last = str(error)
+            time.sleep(2)
+        raise TimeoutError(f"Emulator readiness deadline exceeded: {last}")
+
+    def install(self, apk):
+        # Reinstalling the same fixture on an isolated emulator is safe.
+        # Never retry a deterministic package/signature/install error.
+        for attempt in range(2):
+            self.wait_ready()
+            try:
+                result = self.setup_command("install", "-r", apk, timeout=90)
+                if "Success" not in result.splitlines():
+                    raise AssertionError(f"APK installation failed: {result}")
+                return
+            except subprocess.TimeoutExpired:
+                if attempt:
+                    raise
+            except subprocess.CalledProcessError as error:
+                output = (error.output or "").lower()
+                if attempt or not any(reason in output for reason in
+                                      ("device offline", "device not found", "transport error", "connection reset", "closed")):
+                    raise
+            print(f"Transient ADB install failure for {apk}; rechecking readiness once", flush=True)
+
     def screenshot(self, path):
         data = subprocess.check_output(["adb", "-s", self.serial, "exec-out", "screencap", "-p"], timeout=60)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -416,7 +462,7 @@ def local_media(tv, fixture, output):
 
 
 def smb(tv, fixture, variant, user, password, output):
-    tv.adb("install", "-r", fixture)
+    tv.install(fixture)
     tv.adb("shell", "pm", "clear", PACKAGE)
     tv.launch()
     tv.select("Local network")
@@ -447,8 +493,24 @@ if __name__ == "__main__":
     tv = Tv(args.serial)
     password = os.environ["VIREO_TEST_SMB_PASSWORD"]
     args.output.mkdir(parents=True, exist_ok=True)
-    tv.adb("install", "-r", args.hierarchy)
-    tv.adb("install", "-r", args.release)
+    try:
+        tv.install(args.hierarchy)
+        tv.install(args.release)
+    except Exception:
+        (args.output / "setup-failure.txt").write_text(traceback.format_exc())
+        for name, command in [
+            ("adb-devices", ["adb", "devices", "-l"]),
+            ("boot-state", ["adb", "-s", args.serial, "shell", "getprop", "sys.boot_completed"]),
+            ("package-manager", ["adb", "-s", args.serial, "shell", "pm", "path", "android"]),
+            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-d", "-t", "1500"]),
+        ]:
+            try:
+                result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, timeout=10, check=False)
+                (args.output / f"{name}.txt").write_text(result.stdout)
+            except (OSError, subprocess.SubprocessError) as error:
+                (args.output / f"{name}.txt").write_text(str(error))
+        raise
     failures = []
     checks = [
         ("picker", lambda: picker_cancellation(tv)),

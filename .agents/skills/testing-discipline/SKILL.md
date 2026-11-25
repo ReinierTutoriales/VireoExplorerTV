@@ -30,3 +30,6 @@ Apply AGENTS.md and docs/EXECUTION.md as canonical project contracts. Use docs/I
 
 ## Visual and dependency acceptance
 Apply AGENTS.md modernization gate. For UI changes capture and inspect real screenshots, verify remote navigation and actions, and distinguish visual evidence from functional/CI results. For dependency changes inspect resolved debug/release graphs and consumers; check minified release behavior. Record unexecuted checks and investigate exact-SHA push runs via REST.
+
+## Emulator readiness and install failures
+ADB online does not prove Android is operational (https://developer.android.com/tools/adb). Before fixture installs require consecutive transport, boot and package manager probes. Retry only isolated fixture reinstall on transient transport failure or timeout, once; propagate deterministic install errors immediately. Capture setup diagnostics even before functional tests start. Do not weaken runtime assertions or classify setup failure as product failure. Run harness regression tests before emulator jobs.

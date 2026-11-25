@@ -51,8 +51,10 @@ jobs:
               raise SystemExit("Unavailable stable SDK packages: " + ", ".join(sorted(missing)))
           print("Verified stable TV SDK packages: " + ", ".join(sorted(required)))
           PY
-      - name: Check runtime test syntax
-        run: python3 -m py_compile tests/tv_runtime.py
+      - name: Check runtime harness and setup regressions
+        run: |
+          python3 -m py_compile tests/tv_runtime.py tests/test_tv_runtime.py
+          python3 -m unittest discover -s tests -p test_tv_runtime.py
       - run: gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :tv-test:assembleDebug --stacktrace
       - name: Record resolved dependency graphs
         run: |
