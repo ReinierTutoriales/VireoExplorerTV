@@ -1233,7 +1233,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Row(
+                if (showFolderTools) Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -1406,7 +1406,7 @@ class MainActivity : ComponentActivity() {
                 if (gridView) {
                     LazyVerticalGrid(
                         state = gridState,
-                        columns = GridCells.Adaptive(136.dp),
+                        columns = GridCells.Adaptive(ExplorerGridWidth),
                         modifier = Modifier.weight(1f).focusRestorer(),
                         contentPadding = padding,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),

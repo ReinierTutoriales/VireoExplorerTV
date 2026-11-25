@@ -10,7 +10,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -228,7 +231,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
     val activeSession = session
     val primaryFocus = remember { FocusRequester() }
     val returnFocus = remember { FocusRequester() }
-    val listingState = rememberLazyListState()
+    val listingState = rememberLazyGridState()
     var returnName by remember { mutableStateOf<String?>(null) }
 
     val destination = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -492,7 +495,6 @@ internal fun SmbBrowser(onClose: () -> Unit) {
 
     val restingBorder = Border(BorderStroke(1.dp, colors.borderVariant), shape = VireoCardShape)
     val focusBorder = Border(BorderStroke(2.dp, colors.primary), shape = VireoCardShape)
-    val folderTypeLabel = stringResource(R.string.explorer_type_folder)
 
     LaunchedEffect(server, path, entries, returnName, loading, transfer) {
         if (server == null) {
@@ -833,11 +835,13 @@ internal fun SmbBrowser(onClose: () -> Unit) {
             if (!loading && error == null && entries.isEmpty()) {
                 Text(stringResource(R.string.smb_empty_share), color = colors.onSurfaceVariant)
             }
-            LazyColumn(
-                Modifier.weight(1f).focusRestorer(),
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(ExplorerGridWidth),
+                modifier = Modifier.weight(1f).focusRestorer(),
                 state = listingState,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
             ) {
                 items(entries, key = { it.name }, contentType = { if (it.directory) "folder" else "file" }) { entry ->
                     val mime = mediaMime(entry.name)
@@ -849,13 +853,8 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     val remotePath = (path + entry.name).joinToString("\\")
                     val entryAvailable = !loading && transfer == null
                     val canDownload = entryAvailable && pending == null && entry.bytes >= 0
-                    val sizeText = if (!entry.directory && entry.bytes >= 0) {
-                        Formatter.formatFileSize(context, entry.bytes)
-                    } else null
-                    val extLabel = if (entry.directory) folderTypeLabel else {
-                        val ext = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
-                        if (ext.isNotEmpty() && ext.length <= 8) ext else "FILE"
-                    }
+                    val extLabel = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
+                        .takeIf { !entry.directory && it.length in 1..8 }.orEmpty()
 
                     fun download() {
                         pending = remotePath to entry
@@ -869,19 +868,15 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                             returnFocus.requestFocus()
                         }
                     }
-                    ListItem(
+                    ExplorerFileItem(
+                        name = entry.name,
+                        directory = entry.directory,
+                        bytes = entry.bytes,
+                        typeLabel = extLabel,
+                        grid = true,
                         selected = false,
                         enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
                         modifier = Modifier.fillMaxWidth().then(if (restoring) Modifier.focusRequester(returnFocus) else Modifier),
-                        shape = ListItemDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
-                        colors = ListItemDefaults.colors(
-                            containerColor = colors.background,
-                            contentColor = colors.onSurface,
-                            focusedContainerColor = colors.surfaceVariant,
-                            focusedContentColor = colors.onSurface
-                        ),
-                        border = ListItemDefaults.border(border = Border.None, focusedBorder = focusBorder),
-                        scale = ListItemDefaults.scale(focusedScale = 1.01f),
                         onClick = {
                             when {
                                 entry.directory -> { returnName = null; path = path + entry.name }
@@ -890,46 +885,21 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                                 else -> download()
                             }
                         },
-                        onLongClick = if (entryAvailable) ({ actionTarget = entry }) else null,
-                        headlineContent = {
-                            Text(
-                                entry.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        },
-                        supportingContent = {
-                            Text(
-                                extLabel,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant
-                            )
-                        },
-                        leadingContent = {
-                            Box(
-                                Modifier.size(44.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    androidx.compose.ui.res.painterResource(when {
-                                        entry.directory -> R.drawable.symbol_folder
-                                        video -> R.drawable.symbol_movie
-                                        audio -> R.drawable.symbol_music_note
-                                        image -> R.drawable.symbol_image
-                                        else -> R.drawable.symbol_description
-                                    }), contentDescription = null,
-                                    modifier = Modifier.size(36.dp),
-                                    tint = if (entry.directory) colors.primary else androidx.compose.ui.graphics.Color.Unspecified
-                                )
-                            }
-                        },
-                        trailingContent = sizeText?.let {
-                            { Text(it, style = MaterialTheme.typography.labelLarge, color = colors.primary) }
+                        onLongClick = if (entryAvailable) ({ actionTarget = entry }) else null
+                    ) { artworkModifier ->
+                        Box(artworkModifier, contentAlignment = Alignment.Center) {
+                            Icon(androidx.compose.ui.res.painterResource(
+                                when {
+                                    video -> R.drawable.symbol_movie
+                                    audio -> R.drawable.symbol_music_note
+                                    image -> R.drawable.symbol_image
+                                    entry.name.endsWith(".zip", true) -> R.drawable.symbol_folder_zip
+                                    entry.name.endsWith(".apk", true) -> R.drawable.symbol_android
+                                    else -> R.drawable.symbol_description
+                                }
+                            ), contentDescription = null, modifier = Modifier.size(48.dp))
                         }
-                    )
+                    }
                 }
             }
         }

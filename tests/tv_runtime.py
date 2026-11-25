@@ -305,7 +305,7 @@ def search_pagination(tv, output):
     print("PASS Search continues to a second page", flush=True)
 
 
-def media_playback(tv, label):
+def media_playback(tv, label, output):
     tv.select("vireo-playback.wav")
     pattern = re.compile(r"^(\d+):(\d{2}) / 0:40$")
     def position():
@@ -320,6 +320,7 @@ def media_playback(tv, label):
         time.sleep(0.5)
     tv.key("MEDIA_PLAY_PAUSE")
     tv.text("Play")
+    tv.screenshot(output / f"{label.replace(' ', '-')}-audio-paused.png")
     before = position()
     time.sleep(1.5)
     if abs(position() - before) > 1:
@@ -334,7 +335,7 @@ def media_playback(tv, label):
     print(f"PASS {label} audio playback, pause, seek, resume and exit", flush=True)
 
 
-def video_playback(tv, label):
+def video_playback(tv, label, output):
     tv.select("vireo-video.mp4", strict=True)
     # The first hierarchy dump can finish after the four-second auto-hide.
     # Pause is idempotent and reveals controls even when the surface has focus.
@@ -378,6 +379,7 @@ def video_playback(tv, label):
     tv.key("MEDIA_PLAY")
     tv.text("Subtitle cue active")
     tv.key("MEDIA_PAUSE")
+    tv.screenshot(output / f"{label.replace(' ', '-')}-video-subtitle.png")
     tv.text("Play")
     tv.select("Info", strict=True)
     tv.select("Fit", strict=True)
@@ -398,7 +400,7 @@ def video_playback(tv, label):
     print(f"PASS {label} video rendered, subtitle cue, aspect modes, auto-hide and OK pause", flush=True)
 
 
-def local_media(tv, fixture):
+def local_media(tv, fixture, output):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
     tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
@@ -407,11 +409,13 @@ def local_media(tv, fixture):
     tv.launch()
     tv.select("Internal")
     tv.select("000-Vireo-media")
-    media_playback(tv, "local release")
-    video_playback(tv, "local release")
+    tv.text("vireo-video.mp4")
+    tv.screenshot(output / "local-media-grid.png")
+    media_playback(tv, "local release", output)
+    video_playback(tv, "local release", output)
 
 
-def smb(tv, fixture, variant, user, password):
+def smb(tv, fixture, variant, user, password, output):
     tv.adb("install", "-r", fixture)
     tv.adb("shell", "pm", "clear", PACKAGE)
     tv.launch()
@@ -423,8 +427,9 @@ def smb(tv, fixture, variant, user, password):
     tv.submit_smb()
     tv.text("vireo-smb-fixture.txt")
     print(f"PASS {variant} authenticated SMB directory listing", flush=True)
-    media_playback(tv, f"{variant} SMB")
-    video_playback(tv, f"{variant} SMB")
+    tv.screenshot(output / f"{variant}-smb-grid.png")
+    media_playback(tv, f"{variant} SMB", output)
+    video_playback(tv, f"{variant} SMB", output)
 
 
 if __name__ == "__main__":
@@ -450,9 +455,9 @@ if __name__ == "__main__":
         ("storage", lambda: storage_and_timing(tv, args.output)),
         ("search", lambda: search_pagination(tv, args.output)),
         ("storage mutations", lambda: storage_mutations(tv, args.output)),
-        ("local media", lambda: local_media(tv, args.media_fixture)),
-        ("release SMB", lambda: smb(tv, args.release, "release", args.smb_user, password)),
-        ("debug SMB", lambda: smb(tv, args.debug, "debug", args.smb_user, password)),
+        ("local media", lambda: local_media(tv, args.media_fixture, args.output)),
+        ("release SMB", lambda: smb(tv, args.release, "release", args.smb_user, password, args.output)),
+        ("debug SMB", lambda: smb(tv, args.debug, "debug", args.smb_user, password, args.output)),
     ]
     for label, check in checks:
         try:
