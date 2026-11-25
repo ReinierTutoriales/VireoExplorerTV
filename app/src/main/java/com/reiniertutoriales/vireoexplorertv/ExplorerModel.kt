@@ -2,14 +2,124 @@ package com.reiniertutoriales.vireoexplorertv
 
 import android.app.Application
 import android.net.Uri
+import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
-import androidx.compose.runtime.*
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
+
+internal val entryNameComparator: Comparator<Entry> =
+    compareBy<Entry, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.name }
+
+internal val defaultEntryComparator: Comparator<Entry> =
+    compareBy<Entry> { !it.directory }.then(entryNameComparator)
+
+internal fun <T> filterAndSortItems(
+    items: List<T>,
+    directoryOf: (T) -> Boolean,
+    nameOf: (T) -> String,
+    mimeOf: (T) -> String,
+    sizeOf: (T) -> Long,
+    category: FileCategory?,
+    homeSearch: String,
+    folderSearch: String,
+    sortIndex: Int,
+    alreadyDefaultSorted: Boolean = true,
+    checkActive: () -> Unit = {}
+): List<T> {
+    if (items.isEmpty()) return emptyList()
+    val hasCategory = category != null
+    val hasHomeSearch = homeSearch.isNotEmpty()
+    val hasFolderSearch = folderSearch.isNotEmpty()
+    var steps = 0
+    val filtered = if (!hasCategory && !hasHomeSearch && !hasFolderSearch) {
+        if (sortIndex == 0 && alreadyDefaultSorted) return items
+        ArrayList(items)
+    } else {
+        val out = ArrayList<T>(items.size)
+        for (i in items.indices) {
+            if ((++steps and 0xFF) == 0) checkActive()
+            val item = items[i]
+            val dir = directoryOf(item)
+            val name = nameOf(item)
+            if ((!hasCategory || category.matches(dir, name, mimeOf(item))) &&
+                (!hasHomeSearch || dir || name.contains(homeSearch, ignoreCase = true)) &&
+                (!hasFolderSearch || name.contains(folderSearch, ignoreCase = true))
+            ) {
+                out.add(item)
+            }
+        }
+        out
+    }
+    if (filtered.size <= 1 || (sortIndex == 0 && alreadyDefaultSorted)) return filtered
+    val names = compareBy<T, String>(String.CASE_INSENSITIVE_ORDER, nameOf).thenBy(nameOf)
+    val order = when (sortIndex) {
+        1 -> names.reversed()
+        2 -> compareByDescending(sizeOf).then(names)
+        3 -> compareBy<T> { val sz = sizeOf(it); if (sz < 0) Long.MAX_VALUE else sz }.then(names)
+        else -> names
+    }
+    val comparator = compareBy<T> { !directoryOf(it) }.then(order)
+    filtered.sortWith { left, right ->
+        if ((++steps and 0xFF) == 0) checkActive()
+        comparator.compare(left, right)
+    }
+    return filtered
+}
+
+internal fun filterAndSortEntries(
+    entries: List<Entry>,
+    category: FileCategory?,
+    homeSearch: String,
+    folderSearch: String,
+    sortIndex: Int,
+    alreadyDefaultSorted: Boolean = true,
+    checkActive: () -> Unit = {}
+): List<Entry> = filterAndSortItems(
+    items = entries,
+    directoryOf = Entry::directory,
+    nameOf = Entry::name,
+    mimeOf = Entry::mime,
+    sizeOf = Entry::size,
+    category = category,
+    homeSearch = homeSearch,
+    folderSearch = folderSearch,
+    sortIndex = sortIndex,
+    alreadyDefaultSorted = alreadyDefaultSorted,
+    checkActive = checkActive
+)
+
+private class ListingSpec(
+    val parent: Uri,
+    val entries: List<Entry>,
+    val category: FileCategory?,
+    val homeSearch: String,
+    val folderSearch: String,
+    val sortIndex: Int
+) {
+    fun matches(
+        otherParent: Uri,
+        otherEntries: List<Entry>,
+        otherCategory: FileCategory?,
+        otherHomeSearch: String,
+        otherFolderSearch: String,
+        otherSortIndex: Int
+    ): Boolean =
+        parent == otherParent &&
+            entries === otherEntries &&
+            category == otherCategory &&
+            homeSearch == otherHomeSearch &&
+            folderSearch == otherFolderSearch &&
+            sortIndex == otherSortIndex
+}
 
 internal class ExplorerModel(application: Application, private val savedState: SavedStateHandle) : AndroidViewModel(application) {
     private var currentPath by mutableStateOf(restorePath(application))
@@ -49,7 +159,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
     var clipboardParent by mutableStateOf<Uri?>(null)
     var multi by mutableStateOf(false)
     var marked by mutableStateOf<Set<Uri>>(emptySet())
-    var transferJob by mutableStateOf<kotlinx.coroutines.Job?>(null)
+    var transferJob by mutableStateOf<Job?>(null)
     private val mutableProgress = MutableStateFlow(0L)
     val progress = mutableProgress.asStateFlow()
     var search by mutableStateOf("")
@@ -65,9 +175,96 @@ internal class ExplorerModel(application: Application, private val savedState: S
     private var loadedParent by mutableStateOf<Uri?>(null)
     private var loadedRevision = -1
     private var loadGeneration = 0L
-    private var loadJob: kotlinx.coroutines.Job? = null
+    private var loadJob: Job? = null
+
+    private var visibleParent by mutableStateOf<Uri?>(null)
+    var visibleEntries by mutableStateOf<List<Entry>>(emptyList())
+        private set
+    var listingPending by mutableStateOf(false)
+        private set
+    private var completedListing: ListingSpec? = null
+    private var activeListing: ListingSpec? = null
+    private var listingGeneration = 0L
+    private var listingJob: Job? = null
 
     fun entriesFor(parent: Uri): List<Entry> = if (loadedParent == parent) entries else emptyList()
+
+    fun visibleFor(parent: Uri): List<Entry> = if (visibleParent == parent) visibleEntries else emptyList()
+
+    fun syncListing(
+        parent: Uri?,
+        category: FileCategory?,
+        homeSearch: String,
+        sortIndex: Int
+    ) {
+        if (parent == null) {
+            listingJob?.cancel()
+            listingJob = null
+            activeListing = null
+            completedListing = null
+            visibleParent = null
+            visibleEntries = emptyList()
+            listingPending = false
+            return
+        }
+        val source = entriesFor(parent)
+        val folderSearch = search
+        if (visibleParent != parent) {
+            listingJob?.cancel()
+            listingJob = null
+            activeListing = null
+            completedListing = null
+            visibleParent = parent
+            visibleEntries = emptyList()
+        }
+        if (completedListing?.matches(parent, source, category, homeSearch, folderSearch, sortIndex) == true) {
+            listingPending = false
+            return
+        }
+        if (activeListing?.matches(parent, source, category, homeSearch, folderSearch, sortIndex) == true) {
+            return
+        }
+        // Fast synchronous path when source is empty or default A-Z sort with no active filters.
+        if (source.isEmpty() || (category == null && homeSearch.isEmpty() && folderSearch.isEmpty() && sortIndex == 0)) {
+            listingJob?.cancel()
+            listingJob = null
+            activeListing = null
+            val spec = ListingSpec(parent, source, category, homeSearch, folderSearch, sortIndex)
+            completedListing = spec
+            visibleEntries = source
+            listingPending = false
+            return
+        }
+        val spec = ListingSpec(parent, source, category, homeSearch, folderSearch, sortIndex)
+        activeListing = spec
+        listingPending = true
+        val generation = ++listingGeneration
+        listingJob?.cancel()
+        listingJob = viewModelScope.launch {
+            try {
+                val computed = withContext(Dispatchers.Default) {
+                    val ctx = coroutineContext
+                    filterAndSortEntries(
+                        entries = source,
+                        category = category,
+                        homeSearch = homeSearch,
+                        folderSearch = folderSearch,
+                        sortIndex = sortIndex,
+                        alreadyDefaultSorted = true,
+                        checkActive = { ctx.ensureActive() }
+                    )
+                }
+                if (generation == listingGeneration && visibleParent == parent) {
+                    visibleEntries = computed
+                    completedListing = spec
+                    activeListing = null
+                    listingPending = false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            }
+        }
+    }
 
     fun load(parent: Uri?) {
         if (loadedParent == parent && loadedRevision == revision) return
@@ -83,6 +280,13 @@ internal class ExplorerModel(application: Application, private val savedState: S
             marked = emptySet()
             entries = emptyList()
             selected = null
+            listingJob?.cancel()
+            listingJob = null
+            activeListing = null
+            completedListing = null
+            visibleParent = parent
+            visibleEntries = emptyList()
+            listingPending = false
         }
         busy = parent != null
         if (parent == null) return
@@ -99,6 +303,10 @@ internal class ExplorerModel(application: Application, private val savedState: S
             catch (e: Exception) {
                 if (generation == loadGeneration) {
                     entries = emptyList()
+                    visibleEntries = emptyList()
+                    completedListing = null
+                    activeListing = null
+                    listingPending = false
                     marked = emptySet()
                     multi = false
                     selected = null
@@ -123,15 +331,15 @@ internal class ExplorerModel(application: Application, private val savedState: S
     }
 
     fun mutate(action: suspend () -> Unit) {
-            if (mutating) return
-            mutating = true
-            viewModelScope.launch {
-                try { action(); selected = null; revision++ }
-                catch (e: CancellationException) { throw e }
-                catch (e: Exception) { error = e.localizedMessage ?: "Operation failed" }
-                finally { mutating = false }
-            }
+        if (mutating) return
+        mutating = true
+        viewModelScope.launch {
+            try { action(); selected = null; revision++ }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { error = e.localizedMessage ?: "Operation failed" }
+            finally { mutating = false }
         }
+    }
 
     fun archive(action: suspend ((Long) -> Unit) -> Unit) {
         if (mutating) return
@@ -150,36 +358,38 @@ internal class ExplorerModel(application: Application, private val savedState: S
     fun paste(destination: Uri) {
         if (mutating) return
         val pending = clipboard ?: return
-                        val policy = conflictPolicy
-                        mutating = true
-                        mutableProgress.value = 0
-                        transferJob = viewModelScope.launch {
-                            try {
-                                val report: (Long) -> Unit = { bytes -> mutableProgress.value = bytes }
-                                var completed = 0
-                                var skipped = 0
-                                for (entry in pending.first) {
-                                    mutableProgress.value = 0
-                                    try {
-                                        val names = storage.childNames(destination)
-                                        val name = resolveConflict(entry.name, entry.directory, names, policy)
-                                        if (name == null) skipped++
-                                        else if (entry.directory && pending.second) {
-                                            check(name == entry.name) { "Native folder move cannot rename on conflict" }
-                                            storage.moveDirectory(entry, checkNotNull(clipboardParent), destination)
-                                        } else if (entry.directory) storage.copyDirectory(entry, destination, name, report)
-                                        else storage.transfer(entry, destination, pending.second, name, report)
-                                        completed++
-                                        clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
-                                    } catch (e: CancellationException) { throw e }
-                                    catch (e: Exception) { throw IllegalStateException("$completed of ${pending.first.size} items completed: ${e.localizedMessage}", e) }
-                                }
-                                clipboard = null
-                                if (skipped > 0) error = "$skipped conflicting items skipped; originals preserved"
-                            } catch (e: CancellationException) { throw e }
-                            catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
-                            finally { mutating = false; transferJob = null; revision++ }
+        val policy = conflictPolicy
+        mutating = true
+        mutableProgress.value = 0
+        transferJob = viewModelScope.launch {
+            try {
+                val report: (Long) -> Unit = { bytes -> mutableProgress.value = bytes }
+                var completed = 0
+                var skipped = 0
+                val occupied = storage.childNames(destination).mapTo(HashSet()) { it.lowercase(Locale.ROOT) }
+                for (entry in pending.first) {
+                    mutableProgress.value = 0
+                    try {
+                        val name = resolveConflictInSet(entry.name, entry.directory, occupied, policy)
+                        if (name == null) skipped++
+                        else {
+                            if (entry.directory && pending.second) {
+                                check(name == entry.name) { "Native folder move cannot rename on conflict" }
+                                storage.moveDirectory(entry, checkNotNull(clipboardParent), destination)
+                            } else if (entry.directory) storage.copyDirectory(entry, destination, name, report)
+                            else storage.transfer(entry, destination, pending.second, name, report)
+                            occupied.add(name.lowercase(Locale.ROOT))
                         }
-
+                        completed++
+                        clipboard = pending.first.drop(completed).takeIf { it.isNotEmpty() }?.let { it to pending.second }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { throw IllegalStateException("$completed of ${pending.first.size} items completed: ${e.localizedMessage}", e) }
+                }
+                clipboard = null
+                if (skipped > 0) error = "$skipped conflicting items skipped; originals preserved"
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { error = e.localizedMessage ?: "Transfer failed" }
+            finally { mutating = false; transferJob = null; revision++ }
+        }
     }
 }

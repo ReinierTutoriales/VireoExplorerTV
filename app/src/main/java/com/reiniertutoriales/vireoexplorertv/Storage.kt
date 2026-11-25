@@ -31,7 +31,7 @@ class Storage(private val resolver: ContentResolver) {
         cursor.use { c ->
             buildList {
                 while (c.moveToNext()) { coroutineContext.ensureActive(); add(Entry(D.buildDocumentUriUsingTree(parent, c.getString(0)), c.getString(1) ?: "Unnamed", c.getString(2) ?: "application/octet-stream", if(c.isNull(3)) -1 else c.getLong(3), c.getInt(4))) }
-            }.sortedWith(compareByDescending<Entry> { it.directory }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            }.sortedWith(defaultEntryComparator)
         }
     }
     private inline fun <T> queryChildNames(parent: Uri, read: (Cursor, Int) -> T): T {
@@ -47,7 +47,7 @@ class Storage(private val resolver: ContentResolver) {
             buildList {
                 while (rows.moveToNext()) {
                     coroutineContext.ensureActive()
-                    add(rows.getString(displayName) ?: "Unnamed")
+                    rows.getString(displayName)?.let { add(it) }
                 }
             }
         }
@@ -57,7 +57,7 @@ class Storage(private val resolver: ContentResolver) {
         queryChildNames(parent) { rows, displayName ->
             while (rows.moveToNext()) {
                 coroutineContext.ensureActive()
-                if ((rows.getString(displayName) ?: "Unnamed").equals(name, ignoreCase = true)) {
+                if (rows.getString(displayName)?.equals(name, ignoreCase = true) == true) {
                     return@queryChildNames true
                 }
             }
@@ -149,7 +149,7 @@ class Storage(private val resolver: ContentResolver) {
                     val item = zip.nextEntry ?: break
                     check(++count <= 10000) { "Too many archive entries" }
                     val parts = zipPath(item.name)
-                    check(paths.add(parts)) { "Duplicate archive path" }
+                    check(paths.add(parts.map { it.lowercase(java.util.Locale.ROOT) })) { "Duplicate archive path" }
                     if (item.isDirectory) {
                         folder(parts)
                         check(zip.read() == -1) { "Invalid directory entry" }

@@ -38,17 +38,19 @@ internal enum class FileCategory(val label: Int, val icon: Int) {
     ZIP(R.string.explorer_archives, R.drawable.symbol_folder_zip),
     APK(R.string.explorer_apk, R.drawable.symbol_android);
 
-    fun matches(entry: Entry): Boolean {
-        if (entry.directory) return true
-        val mime = mediaMime(entry.name, entry.mime)
+    fun matches(entry: Entry): Boolean = matches(entry.directory, entry.name, entry.mime)
+
+    fun matches(directory: Boolean, name: String, reportedMime: String): Boolean {
+        if (directory) return true
+        val mime = mediaMime(name, reportedMime)
         return when (this) {
             VIDEO -> mime.startsWith("video/")
             AUDIO -> mime.startsWith("audio/")
             IMAGE -> mime.startsWith("image/")
-            ZIP -> entry.name.endsWith(".zip", ignoreCase = true) || mime == "application/zip"
-            APK -> entry.name.endsWith(".apk", ignoreCase = true) || mime == "application/vnd.android.package-archive"
+            ZIP -> name.endsWith(".zip", ignoreCase = true) || mime == "application/zip"
+            APK -> name.endsWith(".apk", ignoreCase = true) || mime == "application/vnd.android.package-archive"
             DOCUMENT -> mime.startsWith("text/") || mime == "application/pdf" ||
-                entry.name.substringAfterLast('.').lowercase(java.util.Locale.ROOT) in documentExtensions
+                name.substringAfterLast('.').lowercase(java.util.Locale.ROOT) in documentExtensions
         }
     }
 }
