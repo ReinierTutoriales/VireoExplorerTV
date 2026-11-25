@@ -123,9 +123,9 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestMultiplePermissions()
         ) { finishDirectStorageRequest() }
 
-        fun requestDirectStoragePermission(onGranted: (() -> Unit)? = null) {
+        fun requestDirectStoragePermission(requireWrite: Boolean = false, onGranted: (() -> Unit)? = null) {
             directAccess = readDirectStorageState(directAccess)
-            if (directAccess.canRead) {
+            if (if (requireWrite) directAccess.canWrite else directAccess.canRead) {
                 onGranted?.invoke()
                 return
             }
@@ -360,7 +360,7 @@ class MainActivity : ComponentActivity() {
             AppManager(
                 onClose = { cleanupRoot = null; model.appsOpen = false },
                 onAnalyze = { cleanupRoot = it },
-                onRequestStorageAccess = { requestDirectStoragePermission() }
+                onRequestStorageAccess = { requestDirectStoragePermission(requireWrite = true) }
             )
             return
         }
@@ -568,10 +568,10 @@ class MainActivity : ComponentActivity() {
                                 Text(stringResource(R.string.explorer_add_folder))
                             }
                         }
-                        if (!directStorageGranted) {
+                        if (!directStorageWritable) {
                             item {
                                 Card(
-                                    onClick = { requestDirectStoragePermission() },
+                                    onClick = { requestDirectStoragePermission(requireWrite = true) },
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = CardDefaults.shape(VireoCardShape),
                                     colors = CardDefaults.colors(
