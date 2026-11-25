@@ -1,10 +1,13 @@
 """Exercise storage, focus, search and SMB on an isolated Android TV emulator."""
 
 import argparse
+import os
 import re
 import statistics
+import sys
 import subprocess
 import time
+import traceback
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -56,10 +59,15 @@ class Tv:
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds", "")))
         self.adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
 
+    def dismiss_keyboard(self):
+        if "mInputShown=true" in self.adb("shell", "dumpsys", "input_method"):
+            self.key("BACK")
+
     def edit(self, index, value):
         fields = [node for node in self.tree().iter("node") if node.get("class") == "android.widget.EditText"]
         self.tap(fields[index])
         self.adb("shell", "input", "text", value)
+        self.dismiss_keyboard()
 
 
 def storage_and_timing(tv, output):
@@ -118,17 +126,17 @@ def storage_and_timing(tv, output):
     print("PASS Search continues to a second page", flush=True)
 
 
-def smb(tv, fixture, variant):
+def smb(tv, fixture, variant, user, password):
     tv.adb("install", "-r", fixture)
     tv.launch()
     tv.tap(tv.text("Local network"))
     tv.tap(tv.text("Connect"))
     tv.text("Server host or IP")
-    for index, value in [(0, "10.0.2.2"), (1, "vireoci")]:
+    for index, value in [(0, "10.0.2.2"), (1, "vireoci"), (2, user), (4, password)]:
         tv.edit(index, value)
     tv.tap(tv.text("Connect"))
     tv.text("vireo-smb-fixture.txt")
-    print(f"PASS {variant} authenticated guest SMB directory listing", flush=True)
+    print(f"PASS {variant} authenticated SMB directory listing", flush=True)
 
 
 if __name__ == "__main__":
@@ -137,11 +145,27 @@ if __name__ == "__main__":
     parser.add_argument("--release", required=True)
     parser.add_argument("--debug", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--smb-user", required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"emulator-\d+", args.serial):
         parser.error("A disposable Android TV emulator is required.")
     tv = Tv(args.serial)
+    password = os.environ["VIREO_TEST_SMB_PASSWORD"]
+    args.output.mkdir(parents=True, exist_ok=True)
     tv.adb("install", "-r", args.release)
-    storage_and_timing(tv, args.output)
-    smb(tv, args.release, "release")
-    smb(tv, args.debug, "debug")
+    failures = []
+    checks = [
+        ("storage", lambda: storage_and_timing(tv, args.output)),
+        ("release SMB", lambda: smb(tv, args.release, "release", args.smb_user, password)),
+        ("debug SMB", lambda: smb(tv, args.debug, "debug", args.smb_user, password)),
+    ]
+    for label, check in checks:
+        try:
+            check()
+        except Exception:
+            failures.append(label)
+            trace = traceback.format_exc()
+            (args.output / f"{label.replace(' ', '-')}-failure.txt").write_text(trace)
+            print(f"FAIL {label}\n{trace}", file=sys.stderr, flush=True)
+    if failures:
+        raise SystemExit(f"Failed checks: {', '.join(failures)}")
