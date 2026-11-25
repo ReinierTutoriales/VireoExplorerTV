@@ -330,9 +330,19 @@ def media_playback(tv, label):
 
 def video_playback(tv, label):
     tv.select("vireo-video.mp4", strict=True)
-    tv.text("Pause")
-    tv.key("MEDIA_PAUSE")
-    tv.text("Play")
+    # The first hierarchy dump can finish after the four-second auto-hide.
+    # Pause is idempotent and reveals controls even when the surface has focus.
+    deadline = time.monotonic() + 15
+    while True:
+        tv.key("MEDIA_PAUSE")
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} playback error before pause: {labels}")
+        if "Play" in labels and "Info" in labels and "Fit" in labels:
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} could not pause and reveal video controls: {labels}")
+        time.sleep(0.25)
     tv.select("Info", strict=True)
     started = time.monotonic()
     deadline = started + 30
