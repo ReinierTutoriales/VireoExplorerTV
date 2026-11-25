@@ -328,14 +328,51 @@ def media_playback(tv, label):
     print(f"PASS {label} audio playback, pause, seek, resume and exit", flush=True)
 
 
+def video_playback(tv, label):
+    tv.select("vireo-video.mp4")
+    # Pause via the media key before the four-second overlay timeout.
+    tv.text("Pause")
+    tv.key("MEDIA_PAUSE")
+    tv.text("Play")
+    tv.select("Info")
+    tv.text("Video rendered")
+    tv.select("Info")
+    tv.select("Subtitles")
+    tv.find(lambda n: "vireo-video.srt" in (n.get("text") or ""), "sidecar subtitle track")
+    track = tv.find(lambda n: "vireo-video.srt" in (n.get("text") or ""), "sidecar subtitle track")
+    tv.tap(track)
+    tv.select("Info")
+    tv.text("Subtitle cue active")
+    tv.select("Info")
+    tv.select("Fit")
+    tv.text("Zoom")
+    tv.select("Zoom")
+    tv.text("Stretch")
+    tv.select("Stretch")
+    tv.text("Fit")
+    tv.key("MEDIA_PLAY")
+    tv.text("Pause")
+    time.sleep(5)
+    if any(n.get("text") == "Pause" for n in tv.tree().iter("node")):
+        raise AssertionError("Video overlay did not hide")
+    tv.key("DPAD_CENTER")
+    tv.text("Play")
+    tv.key("BACK")
+    tv.text("vireo-video.mp4")
+    print(f"PASS {label} video rendered, subtitle cue, aspect modes, auto-hide and OK pause", flush=True)
+
+
 def local_media(tv, fixture):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
     tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
+    for name in ("vireo-video.mp4", "vireo-video.srt"):
+        tv.adb("push", str(Path(fixture).parent / name), f"/sdcard/000-Vireo-media/{name}")
     tv.launch()
     tv.select("Internal")
     tv.select("000-Vireo-media")
     media_playback(tv, "local release")
+    video_playback(tv, "local release")
 
 
 def smb(tv, fixture, variant, user, password):
@@ -351,6 +388,7 @@ def smb(tv, fixture, variant, user, password):
     tv.text("vireo-smb-fixture.txt")
     print(f"PASS {variant} authenticated SMB directory listing", flush=True)
     media_playback(tv, f"{variant} SMB")
+    video_playback(tv, f"{variant} SMB")
 
 
 if __name__ == "__main__":
