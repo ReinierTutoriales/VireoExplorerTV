@@ -20,3 +20,9 @@
 -keepclassmembers,allowobfuscation class com.hierynomus.smbj.** {
     @net.engio.mbassy.listener.Handler <methods>;
 }
+
+# MBassador's Handler.invocation default is instantiated by SubscriptionFactory
+# through getConstructor(SubscriptionContext.class).
+-keep,allowobfuscation class net.engio.mbassy.dispatch.ReflectiveHandlerInvocation {
+    public <init>(net.engio.mbassy.subscription.SubscriptionContext);
+}
