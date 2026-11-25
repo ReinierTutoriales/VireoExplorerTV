@@ -57,7 +57,7 @@ class Tv:
         for attempt in range(2):
             self.wait_ready()
             try:
-                result = self.setup_command("install", "-r", apk, timeout=90)
+                result = self.setup_command("install", "--no-streaming", "-r", apk, timeout=90)
                 if "Success" not in result.splitlines():
                     raise AssertionError(f"APK installation failed: {result}")
                 return
@@ -69,7 +69,9 @@ class Tv:
                 if attempt or not any(reason in output for reason in
                                       ("device offline", "device not found", "transport error", "connection reset", "closed")):
                     raise
-            print(f"Transient ADB install failure for {apk}; rechecking readiness once", flush=True)
+            print(f"Transient ADB install failure for {apk}; resetting the isolated ADB server once", flush=True)
+            subprocess.run(["adb", "kill-server"], check=True, timeout=15, capture_output=True)
+            subprocess.run(["adb", "start-server"], check=True, timeout=15, capture_output=True)
 
     def screenshot(self, path):
         data = subprocess.check_output(["adb", "-s", self.serial, "exec-out", "screencap", "-p"], timeout=60)

@@ -17,9 +17,12 @@ class SetupTests(unittest.TestCase):
         tv = Tv("emulator-5554")
         with patch.object(tv, "wait_ready") as ready, patch.object(
                 tv, "setup_command", side_effect=[subprocess.TimeoutExpired("adb", 90), "Success\n"]) as command:
-            tv.install("fixture.apk")
+            with patch("tv_runtime.subprocess.run") as reset:
+                tv.install("fixture.apk")
         self.assertEqual(ready.call_count, 2)
         self.assertEqual(command.call_count, 2)
+        self.assertEqual(reset.call_count, 2)
+        command.assert_called_with("install", "--no-streaming", "-r", "fixture.apk", timeout=90)
 
     def test_deterministic_install_error_not_retried(self):
         tv = Tv("emulator-5554")
@@ -33,6 +36,7 @@ class SetupTests(unittest.TestCase):
         tv = Tv("emulator-5554")
         with patch.object(tv, "wait_ready"), patch.object(
                 tv, "setup_command", side_effect=subprocess.TimeoutExpired("adb", 90)) as command:
-            with self.assertRaises(subprocess.TimeoutExpired):
-                tv.install("fixture.apk")
+            with patch("tv_runtime.subprocess.run"):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    tv.install("fixture.apk")
         self.assertEqual(command.call_count, 2)
