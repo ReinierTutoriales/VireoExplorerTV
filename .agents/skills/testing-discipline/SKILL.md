@@ -19,7 +19,9 @@ Apply AGENTS.md and docs/EXECUTION.md as canonical project contracts. Use docs/I
 - Distinguish unit, emulator, benchmark and physical results. Use representative supported API images; disclose unsupported image/API combinations rather than claiming universal coverage. Physical hardware is not a mandatory delivery gate unless requested.
 
 ## 3. Resolve and verify
-- Inspect every failed job and its logs for the exact candidate SHA. Classify failures as product, test/fixture, build or infrastructure. Group related root causes, correct them together, and rerun affected checks plus adjacent regressions.
+- Inspect every failed job and its logs for the exact candidate SHA. For main/push runs, query the GitHub REST Actions runs collection with branch=main and match head_sha; the PR-only helper is insufficient. Retrieve runtime evidence ZIP (hierarchy, window state, logcat) before attributing an empty UI to a crash.
+- In timed TV overlays, use idempotent media pause to establish visible controls before testing them; never assume an initial hierarchy snapshot precedes auto-hide. Verify actual focus, first-frame/cue events and auto-hide separately.
+- Classify failures as product, test/fixture, build or infrastructure. Group related root causes, correct them together, and rerun affected checks plus adjacent regressions.
 - Never skip tests, silently fall back, suppress lint globally, or weaken permissions/security to obtain green CI. Keep failure evidence and report unexecuted checks.
 - Require focused regressions, relevant runtime/API checks, build and lint before declaring the slice validated. Inspect the actual current HEAD results before integration.
 - Measure startup, frames, memory and throughput before asserting performance gains. Distinguish instrumented measurements from automation overhead.
