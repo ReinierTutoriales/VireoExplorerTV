@@ -1,0 +1,109 @@
+name: Sign verified Android APK
+on:
+  workflow_run:
+    workflows: [Android build]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Android build run ID for the current main commit
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  apk:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify build provenance
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id || inputs.run_id }}
+          KEY_CONFIGURED: ${{ secrets.VIREO_ANDROID_SIGNING != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$KEY_CONFIGURED" != "true" ]]; then
+            echo "::notice::Configure VIREO_ANDROID_SIGNING to produce an APK for installation."
+            exit 0
+          fi
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          source="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" '
+            .head_repository.full_name == $repo and .head_branch == "main" and
+            .head_sha == $sha and .path == ".github/workflows/build.yml" and
+            .status == "completed" and .conclusion == "success" and
+            (.event == "push" or .event == "workflow_dispatch")
+          ' <<< "$source" >/dev/null
+          echo "run_id=$SOURCE_RUN" >> "$GITHUB_OUTPUT"
+
+      - name: Download the verified APK
+        if: steps.source.outputs.run_id != ''
+        uses: actions/download-artifact@v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          name: VireoExplorerTV-minified-test
+          path: signing-input
+
+      - name: Sign and verify the installable APK
+        if: steps.source.outputs.run_id != ''
+        env:
+          SIGNING_BUNDLE: ${{ secrets.VIREO_ANDROID_SIGNING }}
+          SOURCE_RUN: ${{ steps.source.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          temp_dir="$(mktemp -d "$RUNNER_TEMP/vireo-key.XXXXXX")"
+          trap 'rm -rf -- "$temp_dir"' EXIT
+          printf '%s' "$SIGNING_BUNDLE" | jq -er '.keystore_base64 | strings | select(length > 0)' |
+            base64 --decode > "$temp_dir/release.p12"
+          VIREO_KEY_PASSWORD="$(jq -er '.password | strings | select(length > 0)' <<< "$SIGNING_BUNDLE")"
+          export VIREO_KEY_PASSWORD
+          alias="$(jq -er '.alias | strings | select(length > 0)' <<< "$SIGNING_BUNDLE")"
+          expected="$(jq -er '.certificate_sha256 | ascii_downcase | select(test("^[0-9a-f]{64}$"))' <<< "$SIGNING_BUNDLE")"
+          unset SIGNING_BUNDLE
+
+          tools_dir="$(find -L "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -type f -name apksigner -print |
+            sort -V | tail -n 1)"
+          [[ -n "$tools_dir" ]]
+          tools_dir="$(dirname "$tools_dir")"
+          input=signing-input/app-release.apk
+          package="$("$tools_dir/aapt2" dump badging "$input")"
+          package="${package%%$'\n'*}"
+          [[ "$package" == "package: name='com.reiniertutoriales.vireoexplorertv' "* ]]
+          version="$(sed -n "s/.*versionName='\([0-9][0-9.]*\)'.*/\1/p" <<< "$package")"
+          [[ -n "$version" ]]
+          mkdir signed
+          filename="VireoExplorerTV-${version}-${GITHUB_SHA:0:7}.apk"
+          "$tools_dir/apksigner" sign --ks "$temp_dir/release.p12" --ks-type PKCS12 \
+            --ks-key-alias "$alias" --ks-pass env:VIREO_KEY_PASSWORD --key-pass env:VIREO_KEY_PASSWORD \
+            --out "signed/$filename" "$input"
+          verified="$("$tools_dir/apksigner" verify --print-certs "signed/$filename")"
+          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$verified")"
+          [[ "$actual" == "$expected" ]]
+          unset VIREO_KEY_PASSWORD
+          (
+            cd signed
+            sha256sum "$filename" > SHA256SUMS
+            printf 'Version: %s\nSource commit: %s\nAndroid build run: %s\nSigning certificate SHA-256: %s\n' \
+              "$version" "$GITHUB_SHA" "$SOURCE_RUN" "$actual" > BUILD.txt
+          )
+
+      - name: Upload the installable APK
+        if: steps.source.outputs.run_id != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: VireoExplorerTV-signed
+          path: signed/
+          if-no-files-found: error
