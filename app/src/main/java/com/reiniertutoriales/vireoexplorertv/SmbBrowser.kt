@@ -856,7 +856,6 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         val ext = entry.name.substringAfterLast('.', "").uppercase(Locale.ROOT)
                         if (ext.isNotEmpty() && ext.length <= 8) ext else "FILE"
                     }
-                    val subtitle = if (sizeText != null) "$extLabel · $sizeText" else extLabel
 
                     fun download() {
                         pending = remotePath to entry
@@ -874,14 +873,14 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         selected = false,
                         enabled = entryAvailable && (entry.directory || playable || viewableImage || canDownload),
                         modifier = Modifier.fillMaxWidth().then(if (restoring) Modifier.focusRequester(returnFocus) else Modifier),
-                        shape = ListItemDefaults.shape(VireoCardShape),
+                        shape = ListItemDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
                         colors = ListItemDefaults.colors(
-                            containerColor = colors.surface,
+                            containerColor = colors.background,
                             contentColor = colors.onSurface,
                             focusedContainerColor = colors.surfaceVariant,
                             focusedContentColor = colors.onSurface
                         ),
-                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                        border = ListItemDefaults.border(border = Border.None, focusedBorder = focusBorder),
                         scale = ListItemDefaults.scale(focusedScale = 1.01f),
                         onClick = {
                             when {
@@ -902,7 +901,7 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         },
                         supportingContent = {
                             Text(
-                                subtitle,
+                                extLabel,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
@@ -911,17 +910,19 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                         },
                         leadingContent = {
                             Box(
-                                Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
+                                Modifier.size(44.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                ExplorerIcon(
-                                    when {
+                                Icon(
+                                    androidx.compose.ui.res.painterResource(when {
                                         entry.directory -> R.drawable.symbol_folder
                                         video -> R.drawable.symbol_movie
                                         audio -> R.drawable.symbol_music_note
                                         image -> R.drawable.symbol_image
                                         else -> R.drawable.symbol_description
-                                    }
+                                    }), contentDescription = null,
+                                    modifier = Modifier.size(36.dp),
+                                    tint = if (entry.directory) colors.primary else androidx.compose.ui.graphics.Color.Unspecified
                                 )
                             }
                         },

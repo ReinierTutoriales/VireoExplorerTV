@@ -22,39 +22,47 @@ internal fun FolderWorkspace(
 ) {
     val colors = MaterialTheme.colorScheme
     var showDetails by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxSize().padding(start = 32.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        Column(Modifier.width(56.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ExplorerPage.entries.forEach { page ->
-                IconButton(enabled = enabled, onClick = { onNavigate(page) }) {
-                    Icon(androidx.compose.ui.res.painterResource(page.icon),
-                        contentDescription = stringResource(page.label),
-                        modifier = Modifier.size(26.dp),
-                        tint = if (page == ExplorerPage.FILES) colors.primary else androidx.compose.ui.graphics.Color.Unspecified)
+    NavigationDrawer(
+        drawerState = rememberDrawerState(DrawerValue.Closed),
+        drawerContent = {
+            Column(
+                Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 12.dp, top = 24.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ExplorerPage.entries.forEach { page ->
+                    NavigationDrawerItem(
+                        selected = page == ExplorerPage.FILES,
+                        enabled = enabled,
+                        onClick = { onNavigate(page) },
+                        leadingContent = { ExplorerIcon(page.icon) },
+                        scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
+                    ) { Text(stringResource(page.label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxHeight()) { content() }
-        if (showDetails) {
-            Surface(
-                modifier = Modifier.width(224.dp).fillMaxHeight(),
-                shape = VireoCardShape,
-                colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface)
-            ) {
-                Column {
-                    OutlinedButton(onClick = { showDetails = false }, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(android.R.string.cancel))
+    ) {
+        Row(
+            Modifier.fillMaxSize().padding(start = 20.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+            if (showDetails) {
+                Surface(
+                    modifier = Modifier.width(224.dp).fillMaxHeight(),
+                    shape = VireoCardShape,
+                    colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface)
+                ) {
+                    Column {
+                        OutlinedButton(onClick = { showDetails = false }, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(android.R.string.cancel))
+                        }
+                        Box(Modifier.weight(1f)) { details() }
                     }
-                    Box(Modifier.weight(1f)) { details() }
                 }
-            }
-        } else {
-            IconButton(enabled = enabled, onClick = { showDetails = true }) {
-                ExplorerIcon(R.drawable.symbol_description, description = stringResource(R.string.explorer_folder_tools))
+            } else {
+                IconButton(enabled = enabled, onClick = { showDetails = true }) {
+                    ExplorerIcon(R.drawable.symbol_description, description = stringResource(R.string.explorer_folder_tools))
+                }
             }
         }
     }
