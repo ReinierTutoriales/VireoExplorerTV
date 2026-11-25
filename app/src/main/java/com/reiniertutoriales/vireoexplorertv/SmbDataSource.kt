@@ -170,7 +170,7 @@ internal class SmbDataSource(
             uri = dataSpec.uri
             started = true
             transferStarted(dataSpec)
-            return remaining
+            return if (dataSpec.length == C.LENGTH_UNSET.toLong()) remaining else dataSpec.length
         } catch (e: Exception) {
             close()
             throw IOException("SMB open failed", e)
@@ -198,6 +198,8 @@ internal class SmbDataSource(
         try { file?.close() } catch (_: Exception) {}
         file = null
         uri = null
+        offset = 0L
+        remaining = 0L
         if (started) {
             started = false
             transferEnded()

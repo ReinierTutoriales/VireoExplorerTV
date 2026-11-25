@@ -7,7 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.media3.common.MimeTypes
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -68,8 +67,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
         }
     }
-    var subtitle by remember(entry.uri) { mutableStateOf<Uri?>(null) }
-    var subtitleMime by remember(entry.uri) { mutableStateOf<String?>(null) }
+    var manualSubtitle by remember(entry.uri) { mutableStateOf<MediaItem.SubtitleConfiguration?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -78,17 +76,26 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                         ?.use { if (it.moveToFirst()) it.getString(0) else null }
                 }
                 val mime = subtitleMimeForName(name.orEmpty())
-                if (mime != null) { subtitleMime = mime; subtitle = uri; subtitleError = null }
+                if (mime != null) {
+                    manualSubtitle = MediaItem.SubtitleConfiguration.Builder(uri)
+                        .setMimeType(mime).setLabel(name ?: uri.lastPathSegment ?: "External subtitle")
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
+                    subtitleError = null
+                }
                 else subtitleError = "Unsupported subtitle format"
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { subtitleError = "Cannot read subtitle" }
         }
     }
     var player by remember(entry.uri) { mutableStateOf<ExoPlayer?>(null) }
-    var playing by remember { mutableStateOf(false) }
+    var playing by remember(entry.uri) { mutableStateOf(false) }
+    var wantsPlayback by remember(entry.uri) { mutableStateOf(true) }
+    var ended by remember(entry.uri) { mutableStateOf(false) }
+    var savedTrackParameters by remember(entry.uri) { mutableStateOf<androidx.media3.common.TrackSelectionParameters?>(null) }
     var positionMs by remember(entry.uri) { mutableLongStateOf(0L) }
     var durationMs by remember(entry.uri) { mutableLongStateOf(C.TIME_UNSET) }
-    var buffering by remember { mutableStateOf(false) }
+    var buffering by remember(entry.uri) { mutableStateOf(false) }
+    var seekable by remember(entry.uri) { mutableStateOf(false) }
     var metadata by remember(entry.uri) { mutableStateOf(MediaMetadata.EMPTY) }
     var captionSize by remember(entry.uri) { mutableIntStateOf(1) }
     val captionFractions = listOf(0.04f, 0.0533f, 0.07f)
@@ -111,35 +118,28 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         while (true) {
             positionMs = active.currentPosition.coerceAtLeast(0L)
             durationMs = active.duration
+            seekable = active.isCurrentMediaItemSeekable
             delay(if (active.isPlaying) 500L else 1000L)
         }
     }
-    var tracks by remember { mutableStateOf(Tracks.EMPTY) }
-    var trackType by remember { mutableIntStateOf(C.TRACK_TYPE_UNKNOWN) }
+    var tracks by remember(entry.uri) { mutableStateOf(Tracks.EMPTY) }
+    var trackType by remember(entry.uri) { mutableIntStateOf(C.TRACK_TYPE_UNKNOWN) }
     fun buildConfiguredMediaItem(): MediaItem {
-        val uri = subtitle
-        val mime = subtitleMime
-        val subs = if (uri != null && mime != null) {
-            val manual = MediaItem.SubtitleConfiguration.Builder(uri)
-                .setMimeType(mime)
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                .build()
-            automaticSubtitles.filter { it.uri != uri } + manual
-        } else {
-            automaticSubtitles
-        }
+        val manual = manualSubtitle
+        val subs = if (manual != null) automaticSubtitles.filter { it.uri != manual.uri } + manual
+            else automaticSubtitles
         return MediaItem.Builder().setUri(entry.uri).setSubtitleConfigurations(subs).build()
     }
-    LaunchedEffect(subtitle, subtitleMime, player) {
+    LaunchedEffect(manualSubtitle, automaticSubtitles, player) {
         val p = player
-        val uri = subtitle
-        val mime = subtitleMime
-        if (p != null && uri != null && mime != null) {
+        if (p != null) {
             val item = buildConfiguredMediaItem()
             if (p.currentMediaItem?.localConfiguration?.subtitleConfigurations != item.localConfiguration?.subtitleConfigurations) {
                 val position = p.currentPosition
                 p.setMediaItem(item, position)
-                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).clearOverridesOfType(C.TRACK_TYPE_TEXT).build()
+                if (manualSubtitle != null) {
+                    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).clearOverridesOfType(C.TRACK_TYPE_TEXT).build()
+                }
                 p.prepare()
             }
         }
@@ -148,11 +148,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     LifecycleStartEffect(entry.uri, sourceFactory, retry) {
         var session: MediaSession? = null
         var active: ExoPlayer? = null
-        var position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
+        val position = prefs.getLong(entry.uri.toString(), 0L).coerceAtLeast(0L)
         fun stop() {
             active?.let {
-                position = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L)
-                saveBoundedResumePosition(prefs, entry.uri.toString(), position)
+                val resume = if (it.playbackState == Player.STATE_ENDED) 0L else it.currentPosition.coerceAtLeast(0L)
+                saveBoundedResumePosition(prefs, entry.uri.toString(), resume)
+                wantsPlayback = it.playWhenReady && it.playbackState != Player.STATE_ENDED
+                savedTrackParameters = it.trackSelectionParameters
                 session?.release()
                 session = null
                 it.release()
@@ -161,6 +163,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             player = null
             playing = false
             buffering = false
+            seekable = false
+            metadata = MediaMetadata.EMPTY
             tracks = Tracks.EMPTY
         }
         fun start() {
@@ -174,20 +178,29 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             active = p
             p.setAudioAttributes(AudioAttributes.DEFAULT, true)
             p.setHandleAudioBecomingNoisy(true)
+            savedTrackParameters?.let { p.trackSelectionParameters = it }
             p.addListener(object : Player.Listener {
                 override fun onMediaMetadataChanged(value: MediaMetadata) { metadata = value }
                 override fun onPlaybackStateChanged(state: Int) {
                     buffering = state == Player.STATE_BUFFERING
-                    if (state == Player.STATE_ENDED) controlsVisible = true
+                    ended = state == Player.STATE_ENDED
+                    if (ended) controlsVisible = true
                 }
                 override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { wantsPlayback = playWhenReady }
+                override fun onEvents(player: Player, events: Player.Events) {
+                    seekable = player.isCurrentMediaItemSeekable
+                    durationMs = player.duration
+                    positionMs = player.currentPosition.coerceAtLeast(0L)
+                }
                 override fun onTracksChanged(value: Tracks) { tracks = value }
                 override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
             })
             session = MediaSession.Builder(context, p).build()
+            val resumePlayback = wantsPlayback
             p.setMediaItem(buildConfiguredMediaItem(), position)
+            p.playWhenReady = resumePlayback
             p.prepare()
-            p.playWhenReady = true
             player = p
         }
         error = null
@@ -197,7 +210,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         onStopOrDispose { stop() }
     }
-    var interaction by remember { mutableIntStateOf(0) }
+    var interaction by remember(entry.uri) { mutableIntStateOf(0) }
+    fun togglePlayback(p: Player) {
+        if (p.playbackState == Player.STATE_ENDED) {
+            p.seekToDefaultPosition()
+            p.play()
+        } else if (p.playWhenReady) p.pause() else p.play()
+    }
     val controlsFocus = remember { FocusRequester() }
     val closeFocus = remember { FocusRequester() }
     val surfaceFocus = remember { FocusRequester() }
@@ -215,8 +234,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             else -> closeFocus.requestFocus()
         }
     }
-    LaunchedEffect(error) {
-        if (error != null) controlsVisible = true
+    LaunchedEffect(error, subtitleError, buffering) {
+        if (error != null || subtitleError != null || buffering) controlsVisible = true
     }
     BackHandler {
         if (subtitleError != null) subtitleError = null
@@ -231,7 +250,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         when (event.key) {
             Key.MediaPlayPause -> {
                 if (isFirstDown) {
-                    p?.let { if (it.isPlaying) it.pause() else it.play() }
+                    p?.let(::togglePlayback)
                     controlsVisible = true
                     interaction++
                 }
@@ -263,7 +282,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
             else -> if (!controlsVisible && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
                 if (event.type == KeyEventType.KeyUp) {
-                    if (event.key == Key.DirectionLeft && p?.isCurrentMediaItemSeekable == true) p.seekBack()
+                    if (event.key == Key.DirectionCenter || event.key == Key.Enter) p?.let(::togglePlayback)
+                    else if (event.key == Key.DirectionLeft && p?.isCurrentMediaItemSeekable == true) p.seekBack()
                     else if (event.key == Key.DirectionRight && p?.isCurrentMediaItemSeekable == true) p.seekForward()
                     controlsVisible = true
                     interaction++
@@ -368,11 +388,11 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         ) {
             OutlinedButton(modifier = Modifier.focusRequester(closeFocus), onClick = onClose) { Text("Back") }
             if (error != null) Button(onClick = { retry++ }) { Text("Retry") }
-            OutlinedButton(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekBack() }) { Text("−10s") }
+            OutlinedButton(enabled = seekable, onClick = { p?.seekBack() }) { Text("−10s") }
             Button(modifier = Modifier.focusRequester(controlsFocus), enabled = p != null, onClick = {
-                p?.let { if (it.isPlaying) it.pause() else it.play() }
-            }) { Text(if (playing) "Pause" else "Play") }
-            OutlinedButton(enabled = p?.isCurrentMediaItemSeekable == true, onClick = { p?.seekForward() }) { Text("+10s") }
+                p?.let(::togglePlayback)
+            }) { Text(if (wantsPlayback && !ended) "Pause" else "Play") }
+            OutlinedButton(enabled = seekable, onClick = { p?.seekForward() }) { Text("+10s") }
         }
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),

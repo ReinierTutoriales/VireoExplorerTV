@@ -110,6 +110,15 @@ jobs:
           sudo systemctl stop smbd || true
           mkdir -p /tmp/vireo-ci-smb
           printf 'Vireo SMB fixture\n' > /tmp/vireo-ci-smb/vireo-smb-fixture.txt
+          python3 - <<'PY'
+          import math, struct, wave
+          rate = 16000
+          with wave.open("/tmp/vireo-ci-smb/vireo-playback.wav", "wb") as audio:
+              audio.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+              second = b"".join(struct.pack("<h", int(1000 * math.sin(2 * math.pi * 440 * i / rate))) for i in range(rate))
+              for _ in range(40):
+                  audio.writeframes(second)
+          PY
           chmod 755 /tmp/vireo-ci-smb
           cat > /tmp/vireo-ci-smb.conf <<'CONFIG'
           [global]
@@ -138,7 +147,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim
           emulator-boot-timeout: 240
           disable-animations: true
-          script: python3 tests/tv_runtime.py --release artifacts/release/app-release.apk --debug artifacts/debug/app-debug.apk --hierarchy artifacts/hierarchy/tv-test-debug.apk --output runtime-evidence --smb-user "$(id -un)"
+          script: python3 tests/tv_runtime.py --release artifacts/release/app-release.apk --debug artifacts/debug/app-debug.apk --hierarchy artifacts/hierarchy/tv-test-debug.apk --media-fixture /tmp/vireo-ci-smb/vireo-playback.wav --output runtime-evidence --smb-user "$(id -un)"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
