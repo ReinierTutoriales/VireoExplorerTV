@@ -53,7 +53,7 @@ jobs:
           PY
       - name: Check runtime test syntax
         run: python3 -m py_compile tests/tv_runtime.py
-      - run: gradle assembleDebug testDebugUnitTest lintDebug assembleRelease --stacktrace
+      - run: gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :tv-test:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v7
         with:
           name: VireoExplorerTV-minified-test
@@ -63,6 +63,12 @@ jobs:
         with:
           name: VireoExplorerTV-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: VireoExplorerTV-hierarchy-test
+          path: tv-test/build/outputs/apk/debug/tv-test-debug.apk
           if-no-files-found: error
 
   tv-runtime:
@@ -91,6 +97,10 @@ jobs:
         with:
           name: VireoExplorerTV-debug
           path: artifacts/debug
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: VireoExplorerTV-hierarchy-test
+          path: artifacts/hierarchy
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
       - name: Start loopback SMB fixture
@@ -128,7 +138,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim
           emulator-boot-timeout: 240
           disable-animations: true
-          script: python3 tests/tv_runtime.py --release artifacts/release/app-release.apk --debug artifacts/debug/app-debug.apk --output runtime-evidence --smb-user "$(id -un)"
+          script: python3 tests/tv_runtime.py --release artifacts/release/app-release.apk --debug artifacts/debug/app-debug.apk --hierarchy artifacts/hierarchy/tv-test-debug.apk --output runtime-evidence --smb-user "$(id -un)"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

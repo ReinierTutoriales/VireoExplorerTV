@@ -1,6 +1,7 @@
 """Exercise storage, focus, search and SMB on an isolated Android TV emulator."""
 
 import argparse
+import base64
 import os
 import re
 import statistics
@@ -15,7 +16,6 @@ from pathlib import Path
 PACKAGE = "com.reiniertutoriales.vireoexplorertv"
 FIXTURE_DIR = "000-Vireo-CI"
 FIXTURE_FILE = "vireo-fixture.txt"
-DB_XML = "/data/local/tmp/vireo-window.xml"
 
 
 class Tv:
@@ -48,21 +48,19 @@ class Tv:
         return int(match[1]) if match else None
 
     def tree(self):
-        # Legacy UIAutomator may fail without replacing its previous XML dump.
-        # Never use a stale hierarchy to dispatch a destructive or navigation action.
+        # Instrumentation runs in a separate package; no fixed idle wait or stale XML.
         last = ""
-        for _ in range(4):
-            self.adb("shell", "rm", "-f", DB_XML)
-            last = self.adb("shell", "uiautomator dump " + DB_XML + " 2>&1")
-            if "dumped to" in last.lower():
-                try:
-                    root = ET.fromstring(self.adb("shell", "cat", DB_XML))
-                    if next(root.iter("node"), None) is not None:
-                        return root
-                except (subprocess.SubprocessError, ET.ParseError):
-                    pass
-            time.sleep(0.4)
-        raise AssertionError(f"UIAutomator did not produce a fresh hierarchy: {last}")
+        for _ in range(5):
+            last = self.adb("shell", "am", "instrument", "-w",
+                            "com.reiniertutoriales.vireotest/.Hierarchy")
+            match = re.search(r"^INSTRUMENTATION_RESULT: hierarchy=([A-Za-z0-9+/=]+)$",
+                              last, re.MULTILINE)
+            if match and "INSTRUMENTATION_CODE: -1" in last:
+                root = ET.fromstring(base64.b64decode(match[1], validate=True))
+                if next(root.iter("node"), None) is not None:
+                    return root
+            time.sleep(0.25)
+        raise AssertionError(f"No fresh instrumentation hierarchy: {last}")
 
     def find(self, predicate, label, focused=False):
         for _ in range(5):
@@ -320,6 +318,7 @@ if __name__ == "__main__":
     parser.add_argument("--serial", default="emulator-5554")
     parser.add_argument("--release", required=True)
     parser.add_argument("--debug", required=True)
+    parser.add_argument("--hierarchy", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--smb-user", required=True)
     args = parser.parse_args()
@@ -328,6 +327,7 @@ if __name__ == "__main__":
     tv = Tv(args.serial)
     password = os.environ["VIREO_TEST_SMB_PASSWORD"]
     args.output.mkdir(parents=True, exist_ok=True)
+    tv.adb("install", "-r", args.hierarchy)
     tv.adb("install", "-r", args.release)
     failures = []
     checks = [
