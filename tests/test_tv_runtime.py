@@ -41,16 +41,17 @@ class SetupTests(unittest.TestCase):
                     tv.install("fixture.apk")
         self.assertEqual(command.call_count, 2)
 
-    def test_fixture_override_requires_isolated_ci(self):
+    def test_runtime_configuration_after_readiness(self):
         tv = Tv("emulator-5554")
-        with patch.dict("os.environ", {"GITHUB_ACTIONS": "false"}), patch.object(tv, "setup_command") as command:
-            with self.assertRaises(RuntimeError):
-                tv.configure_fixture_verification()
-        command.assert_not_called()
+        with patch.object(tv, "wait_ready") as ready, patch.object(
+                tv, "setup_command", side_effect=["", "0.0", "", "0.0", "", "0.0"]) as command:
+            tv.configure_runtime()
+        ready.assert_called_once()
+        self.assertEqual(command.call_count, 6)
 
-    def test_fixture_override_readback(self):
+    def test_runtime_configuration_rejects_unapplied_setting(self):
         tv = Tv("emulator-5554")
-        with patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}), patch.object(tv, "wait_ready"), patch.object(
-                tv, "setup_command", side_effect=["", "0\n"]) as command:
-            tv.configure_fixture_verification()
-        self.assertEqual(command.call_count, 2)
+        with patch.object(tv, "wait_ready"), patch.object(
+                tv, "setup_command", side_effect=["", "1.0"]):
+            with self.assertRaises(AssertionError):
+                tv.configure_runtime()

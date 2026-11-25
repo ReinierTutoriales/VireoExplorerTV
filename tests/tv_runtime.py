@@ -51,16 +51,14 @@ class Tv:
             time.sleep(2)
         raise TimeoutError(f"Emulator readiness deadline exceeded: {last}")
 
-    def configure_fixture_verification(self):
-        # Only our disposable CI emulator; never change verification on a real device.
-        if not re.fullmatch(r"emulator-\d+", self.serial) or os.environ.get("GITHUB_ACTIONS") != "true":
-            raise RuntimeError("Fixture verification override requires a disposable GitHub Actions emulator")
+    def configure_runtime(self):
+        # Apply only after Android framework services are responsive.
         self.wait_ready()
-        self.setup_command("shell", "settings", "put", "global", "verifier_verify_adb_installs", "0")
-        value = self.setup_command("shell", "settings", "get", "global", "verifier_verify_adb_installs").strip()
-        if value != "0":
-            raise AssertionError(f"ADB fixture verification override not applied: {value}")
-        print("External verifier disabled for ADB fixture installs on disposable CI emulator", flush=True)
+        for name in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
+            self.setup_command("shell", "settings", "put", "global", name, "0")
+            if float(self.setup_command("shell", "settings", "get", "global", name).strip()) != 0:
+                raise AssertionError(f"Animation setting not applied: {name}")
+        print("Runtime animation settings verified", flush=True)
 
     def install(self, apk):
         # Reinstalling the same fixture on an isolated emulator is safe.
@@ -554,7 +552,7 @@ if __name__ == "__main__":
     password = os.environ["VIREO_TEST_SMB_PASSWORD"]
     args.output.mkdir(parents=True, exist_ok=True)
     try:
-        tv.configure_fixture_verification()
+        tv.configure_runtime()
         tv.install(args.hierarchy)
         tv.install(args.release)
     except Exception:
