@@ -53,7 +53,7 @@ class Tv:
         last = ""
         for _ in range(4):
             self.adb("shell", "rm", "-f", DB_XML)
-            last = self.adb("shell", "uiautomator", "dump", DB_XML)
+            last = self.adb("shell", "uiautomator dump " + DB_XML + " 2>&1")
             if "dumped to" in last.lower():
                 try:
                     root = ET.fromstring(self.adb("shell", "cat", DB_XML))
@@ -198,7 +198,7 @@ def storage_mutations(tv, output):
     payload = "Vireo mutation integrity fixture"
     tv.storage_access(True)
     # All paths are constant and restricted to this disposable emulator fixture.
-    tv.adb("shell", f"mkdir -p {root}/destination; printf '%s' '{payload}' > {root}/{source}")
+    tv.adb("shell", f"rm -rf {root}; mkdir -p {root}/destination; printf '%s' '{payload}' > {root}/{source}")
     tv.launch()
     tv.select("Internal")
     tv.select(name)
@@ -303,6 +303,7 @@ def search_pagination(tv, output):
 
 def smb(tv, fixture, variant, user, password):
     tv.adb("install", "-r", fixture)
+    tv.adb("shell", "pm", "clear", PACKAGE)
     tv.launch()
     tv.select("Local network")
     tv.select("Manual SMB connection")
@@ -347,7 +348,12 @@ if __name__ == "__main__":
             print(f"FAIL {label}\n{trace}", file=sys.stderr, flush=True)
             try:
                 (args.output / f"{label.replace(' ', '-')}-window.xml").write_text(ET.tostring(tv.tree(), encoding="unicode"))
-            except (OSError, subprocess.SubprocessError, ET.ParseError):
-                pass
+            except (OSError, subprocess.SubprocessError, ET.ParseError, AssertionError) as evidence_error:
+                print(f"Hierarchy capture failed for {label}: {evidence_error}", file=sys.stderr, flush=True)
+            try:
+                (args.output / f"{label.replace(' ', '-')}-logcat.txt").write_text(tv.adb("logcat", "-d", "-t", "1500"))
+                (args.output / f"{label.replace(' ', '-')}-window-state.txt").write_text(tv.adb("shell", "dumpsys", "window"))
+            except (OSError, subprocess.SubprocessError) as evidence_error:
+                print(f"Diagnostic capture failed for {label}: {evidence_error}", file=sys.stderr, flush=True)
     if failures:
         raise SystemExit(f"Failed checks: {', '.join(failures)}")
