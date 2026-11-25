@@ -82,7 +82,7 @@ class Tv:
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds", "")))
         return (x1 + x2) // 2, (y1 + y2) // 2
 
-    def select(self, label, long=False):
+    def select(self, label, long=False, strict=False):
         attempts = set()
         for _ in range(10):
             tree = self.tree()
@@ -105,8 +105,8 @@ class Tv:
                     break
             else:
                 break
-        if long:
-            raise AssertionError(f"Cannot reach {label!r} using D-pad for long press")
+        if long or strict:
+            raise AssertionError(f"Cannot reach {label!r} using D-pad (long={long})")
         print(f"Touch fallback for {label!r}; not a D-pad pass", flush=True)
         self.tap(self.text(label))
 
@@ -328,14 +328,71 @@ def media_playback(tv, label):
     print(f"PASS {label} audio playback, pause, seek, resume and exit", flush=True)
 
 
+def video_playback(tv, label):
+    tv.select("vireo-video.mp4", strict=True)
+    tv.text("Pause")
+    tv.key("MEDIA_PAUSE")
+    tv.text("Play")
+    tv.select("Info", strict=True)
+    started = time.monotonic()
+    deadline = started + 30
+    while True:
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if "Video rendered" in labels:
+            break
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} playback error: {labels}")
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} first frame exceeded 30s: {labels}")
+        time.sleep(0.25)
+    print(f"{label} first frame observation after opening Info: {time.monotonic() - started:.2f}s", flush=True)
+    tv.select("Info", strict=True)
+    tv.select("Subtitles", strict=True)
+    tv.text("Close tracks", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.text("Subtitles off", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.find(lambda n: "vireo-video.srt" in (n.get("text") or ""),
+            "focused sidecar subtitle track", focused=True)
+    tv.key("DPAD_CENTER")
+    tv.text("Play", focused=True)
+    tv.select("Info", strict=True)
+    tv.find(lambda n: (n.get("text") or "").startswith("✓ application/x-media3-cues"),
+            "selected subtitle track")
+    tv.key("MEDIA_PLAY")
+    tv.text("Subtitle cue active")
+    tv.key("MEDIA_PAUSE")
+    tv.text("Play")
+    tv.select("Info", strict=True)
+    tv.select("Fit", strict=True)
+    tv.text("Zoom")
+    tv.select("Zoom", strict=True)
+    tv.text("Stretch")
+    tv.select("Stretch", strict=True)
+    tv.text("Fit")
+    tv.key("MEDIA_PLAY")
+    tv.text("Pause")
+    time.sleep(5)
+    if any(n.get("text") == "Pause" for n in tv.tree().iter("node")):
+        raise AssertionError("Video overlay did not hide")
+    tv.key("DPAD_CENTER")
+    tv.text("Play")
+    tv.key("BACK")
+    tv.text("vireo-video.mp4")
+    print(f"PASS {label} video rendered, subtitle cue, aspect modes, auto-hide and OK pause", flush=True)
+
+
 def local_media(tv, fixture):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
     tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
+    for name in ("vireo-video.mp4", "vireo-video.srt"):
+        tv.adb("push", str(Path(fixture).parent / name), f"/sdcard/000-Vireo-media/{name}")
     tv.launch()
     tv.select("Internal")
     tv.select("000-Vireo-media")
     media_playback(tv, "local release")
+    video_playback(tv, "local release")
 
 
 def smb(tv, fixture, variant, user, password):
@@ -351,6 +408,7 @@ def smb(tv, fixture, variant, user, password):
     tv.text("vireo-smb-fixture.txt")
     print(f"PASS {variant} authenticated SMB directory listing", flush=True)
     media_playback(tv, f"{variant} SMB")
+    video_playback(tv, f"{variant} SMB")
 
 
 if __name__ == "__main__":

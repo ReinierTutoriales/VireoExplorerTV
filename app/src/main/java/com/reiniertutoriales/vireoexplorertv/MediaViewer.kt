@@ -96,6 +96,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     var durationMs by remember(entry.uri) { mutableLongStateOf(C.TIME_UNSET) }
     var buffering by remember(entry.uri) { mutableStateOf(false) }
     var seekable by remember(entry.uri) { mutableStateOf(false) }
+    var firstFrame by remember(entry.uri) { mutableStateOf(false) }
+    var captionPresent by remember(entry.uri) { mutableStateOf(false) }
     var metadata by remember(entry.uri) { mutableStateOf(MediaMetadata.EMPTY) }
     var captionSize by remember(entry.uri) { mutableIntStateOf(1) }
     val captionFractions = listOf(0.04f, 0.0533f, 0.07f)
@@ -164,6 +166,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             playing = false
             buffering = false
             seekable = false
+            firstFrame = false
+            captionPresent = false
             metadata = MediaMetadata.EMPTY
             tracks = Tracks.EMPTY
         }
@@ -194,6 +198,10 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                     positionMs = player.currentPosition.coerceAtLeast(0L)
                 }
                 override fun onTracksChanged(value: Tracks) { tracks = value }
+                override fun onRenderedFirstFrame() { firstFrame = true }
+                override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                    captionPresent = cueGroup.cues.isNotEmpty()
+                }
                 override fun onPlayerError(value: PlaybackException) { error = value.errorCodeName }
             })
             session = MediaSession.Builder(context, p).build()
@@ -218,6 +226,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         } else if (p.playWhenReady) p.pause() else p.play()
     }
     val controlsFocus = remember { FocusRequester() }
+    val tracksFocus = remember { FocusRequester() }
     val closeFocus = remember { FocusRequester() }
     val surfaceFocus = remember { FocusRequester() }
     val video = entry.mime.startsWith("video/") || tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
@@ -234,13 +243,16 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             else -> closeFocus.requestFocus()
         }
     }
+    LaunchedEffect(trackType, player, controlsVisible) {
+        if (trackType != C.TRACK_TYPE_UNKNOWN && player != null && controlsVisible) tracksFocus.requestFocus()
+    }
     LaunchedEffect(error, subtitleError, buffering) {
         if (error != null || subtitleError != null || buffering) controlsVisible = true
     }
     BackHandler {
         if (subtitleError != null) subtitleError = null
+        else if (trackType != C.TRACK_TYPE_UNKNOWN) { trackType = C.TRACK_TYPE_UNKNOWN; controlsFocus.requestFocus() }
         else if (showInfo) showInfo = false
-        else if (trackType != C.TRACK_TYPE_UNKNOWN) trackType = C.TRACK_TYPE_UNKNOWN
         else if (video && controlsVisible && error == null && playing) controlsVisible = false
         else onClose()
     }
@@ -345,6 +357,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         ) {
         if (video) Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         if (buffering) Text("Buffering…")
+        if (video && !firstFrame && error == null && !buffering && !ended) Text("Waiting for video…")
         (error ?: subtitleError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (durationMs > 0) {
             val fraction = (positionMs.toDouble() / durationMs).coerceIn(0.0, 1.0).toFloat()
@@ -353,6 +366,8 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         val p = player
         if (showInfo) {
+            if (video) Text(if (firstFrame) "Video rendered" else "Video not rendered")
+            if (tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }) Text(if (captionPresent) "Subtitle cue active" else "No active subtitle cue")
             LazyColumn(Modifier.heightIn(max = 180.dp)) {
                 items(tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO || it.type == C.TRACK_TYPE_TEXT }) { group ->
                     for (i in 0 until group.length) {
@@ -362,11 +377,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
         }
         if (trackType != C.TRACK_TYPE_UNKNOWN && p != null) {
-            LazyColumn(Modifier.heightIn(max = 160.dp)) {
+            LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                item { OutlinedButton(modifier = Modifier.focusRequester(tracksFocus), onClick = { trackType = C.TRACK_TYPE_UNKNOWN; controlsFocus.requestFocus() }) { Text("Close tracks") } }
                 if (trackType == C.TRACK_TYPE_TEXT) item {
                     Button(onClick = {
                         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
                         trackType = C.TRACK_TYPE_UNKNOWN
+                        controlsFocus.requestFocus()
                     }) { Text("Subtitles off") }
                 }
                 items(tracks.groups.filter { it.type == trackType }) { group ->
@@ -376,6 +393,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                             Button(onClick = {
                                 p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setTrackTypeDisabled(group.type, false).setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, i)).build()
                                 trackType = C.TRACK_TYPE_UNKNOWN
+                                controlsFocus.requestFocus()
                             }) { Text((if (group.isTrackSelected(i)) "✓ " else "") + (format.label ?: format.language ?: "Track ${i + 1}")) }
                         }
                     }
@@ -403,14 +421,14 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 Text(speeds[speedIndex].toString() + "×")
             }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO },
-                onClick = { trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
+                onClick = { showInfo = false; trackType = C.TRACK_TYPE_AUDIO }) { Text("Audio") }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT },
-                onClick = { trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
+                onClick = { showInfo = false; trackType = C.TRACK_TYPE_TEXT }) { Text("Subtitles") }
             OutlinedButton(enabled = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT },
                 onClick = { captionSize = (captionSize + 1) % captionFractions.size }) {
                 Text("CC " + listOf("S", "M", "L")[captionSize])
             }
-            OutlinedButton(onClick = { showInfo = !showInfo }) { Text("Info") }
+            OutlinedButton(onClick = { trackType = C.TRACK_TYPE_UNKNOWN; showInfo = !showInfo }) { Text("Info") }
             OutlinedButton(enabled = p != null, onClick = {
                 try { picker.launch(arrayOf("*/*")) }
                 catch (_: Exception) { subtitleError = "Subtitle picker unavailable" }
