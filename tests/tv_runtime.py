@@ -446,11 +446,56 @@ def video_playback(tv, label, output):
     print(f"PASS {label} video rendered, subtitle cue, aspect modes, auto-hide and OK pause", flush=True)
 
 
+def multitrack_playback(tv, label, output):
+    tv.select("vireo-multitrack.mkv", strict=True)
+    deadline = time.monotonic() + 30
+    while True:
+        tv.key("MEDIA_PAUSE")
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} MKV playback error: {labels}")
+        if "Play" in labels and "Info" in labels:
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} MKV controls unavailable: {labels}")
+        time.sleep(0.25)
+    tv.select("Info", strict=True)
+    deadline = time.monotonic() + 30
+    while True:
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} MKV decode error: {labels}")
+        if "Video rendered" in labels and any(text.startswith("✓ audio/mp4a-latm") for text in labels):
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} MKV H264/AAC not ready: {labels}")
+        time.sleep(0.25)
+    tv.select("Info", strict=True)
+    tv.select("Subtitles", strict=True)
+    tv.text("Close tracks", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.text("Subtitles off", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.find(lambda n: bool(n.get("text")) and n.get("text") not in ("Subtitles off", "Close tracks"),
+            "focused embedded subtitle", focused=True)
+    tv.key("DPAD_CENTER")
+    tv.text("Play", focused=True)
+    tv.select("Info", strict=True)
+    tv.key("MEDIA_PLAY")
+    tv.text("Subtitle cue active")
+    tv.key("MEDIA_PAUSE")
+    tv.screenshot(output / f"{label.replace(' ', '-')}-mkv-embedded.png")
+    tv.select("Info", strict=True)
+    tv.key("BACK")
+    tv.text("vireo-multitrack.mkv")
+    print(f"PASS {label} Matroska H264/AAC and embedded subtitle cue", flush=True)
+
+
 def local_media(tv, fixture, output):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
     tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
-    for name in ("vireo-video.mp4", "vireo-video.srt"):
+    for name in ("vireo-video.mp4", "vireo-video.srt", "vireo-multitrack.mkv"):
         tv.adb("push", str(Path(fixture).parent / name), f"/sdcard/000-Vireo-media/{name}")
     tv.launch()
     tv.select("Internal")
@@ -459,6 +504,7 @@ def local_media(tv, fixture, output):
     tv.screenshot(output / "local-media-grid.png")
     media_playback(tv, "local release", output)
     video_playback(tv, "local release", output)
+    multitrack_playback(tv, "local release", output)
 
 
 def smb(tv, fixture, variant, user, password, output):
@@ -476,6 +522,7 @@ def smb(tv, fixture, variant, user, password, output):
     tv.screenshot(output / f"{variant}-smb-grid.png")
     media_playback(tv, f"{variant} SMB", output)
     video_playback(tv, f"{variant} SMB", output)
+    multitrack_playback(tv, f"{variant} SMB", output)
 
 
 if __name__ == "__main__":
