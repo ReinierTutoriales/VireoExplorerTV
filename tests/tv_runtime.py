@@ -8,6 +8,7 @@ import sys
 import subprocess
 import time
 import traceback
+import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -60,7 +61,7 @@ class Tv:
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds", "")))
         return (x1 + x2) // 2, (y1 + y2) // 2
 
-    def select(self, label):
+    def select(self, label, long=False):
         attempts = set()
         for _ in range(10):
             tree = self.tree()
@@ -69,7 +70,7 @@ class Tv:
             if target is None or focused is None:
                 break
             if target in list(focused.iter("node")):
-                self.key("DPAD_CENTER")
+                self.key("DPAD_CENTER", long=long)
                 return
             x, y = self.center(focused)
             tx, ty = self.center(target)
@@ -83,6 +84,9 @@ class Tv:
                     break
             else:
                 break
+        if long:
+            raise AssertionError(f"Cannot reach {label!r} using D-pad for long press")
+        print(f"Touch fallback for {label!r}; not a D-pad pass", flush=True)
         self.tap(self.text(label))
 
     def tap(self, node):
@@ -162,6 +166,101 @@ def storage_and_timing(tv, output):
     print("PASS D-pad long press, action dialog and focus restoration", flush=True)
 
 
+def storage_mutations(tv, output):
+    """Exercise actual mutations, not just the availability of action buttons."""
+    name = "000-Vireo-CI-mutations"
+    root = f"/sdcard/{name}"
+    source = "source.txt"
+    renamed = "source.txt-renamed"
+    payload = "Vireo mutation integrity fixture"
+    tv.adb("shell", "appops", "set", "--uid", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
+    # All paths are constant and restricted to this disposable emulator fixture.
+    tv.adb("shell", f"mkdir -p {root}/destination; printf '%s' '{payload}' > {root}/{source}")
+    tv.launch()
+    tv.select("Internal")
+    tv.select(name)
+
+    def check_file(path):
+        actual = tv.adb("shell", "cat", path)
+        if actual != payload:
+            raise AssertionError(f"Unexpected content in {path}: {actual!r}")
+
+    def check_absent(path):
+        tv.adb("shell", "test", "!", "-e", path)
+
+    def action(item, label):
+        tv.select(item, long=True)
+        tv.select(label)
+
+    action(source, "Rename")
+    field = tv.find(lambda node: node.get("class") == "android.widget.EditText", "rename field")
+    if field.get("focused") != "true":
+        raise AssertionError("Rename input does not have initial focus")
+    tv.key("MOVE_END")
+    tv.adb("shell", "input", "text", "-renamed")
+    tv.dismiss_keyboard()
+    tv.select("OK")
+    tv.text(renamed)
+    check_absent(f"{root}/{source}")
+    check_file(f"{root}/{renamed}")
+
+    action(renamed, "Copy")
+    tv.select("destination")
+    tv.select("Paste here")
+    tv.text(renamed)
+    check_file(f"{root}/{renamed}")
+    check_file(f"{root}/destination/{renamed}")
+    tv.key("BACK")
+
+    action(renamed, "Create ZIP")
+    tv.select("Create")
+    archive = f"{renamed}.zip"
+    tv.text(archive)
+    local_zip = output / "mutation-fixture.zip"
+    tv.adb("pull", f"{root}/{archive}", str(local_zip))
+    with zipfile.ZipFile(local_zip) as zipped:
+        if zipped.namelist() != [renamed] or zipped.read(renamed) != payload.encode():
+            raise AssertionError("ZIP archive does not preserve source content")
+    local_zip.unlink()
+    check_file(f"{root}/{renamed}")
+
+    action(renamed, "Delete")
+    tv.text("Delete file?")
+    tv.select("Cancel")
+    check_file(f"{root}/{renamed}")
+    action(renamed, "Delete")
+    tv.text("Delete file?")
+    tv.select("Delete")
+    # Wait for the refreshed listing, then verify that only the selected file was deleted.
+    for _ in range(10):
+        if not any(node.get("text") == renamed for node in tv.tree().iter("node")):
+            break
+        time.sleep(0.25)
+    check_absent(f"{root}/{renamed}")
+    check_file(f"{root}/destination/{renamed}")
+
+    action(archive, "Extract ZIP")
+    tv.select("Extract")
+    tv.text(renamed)
+    tv.select(renamed)
+    tv.text(renamed)
+    check_file(f"{root}/{renamed}/{renamed}")
+    tv.key("BACK")
+
+    # Move the archive into a different folder; source must disappear and bytes remain valid.
+    action(archive, "Move")
+    tv.select("destination")
+    tv.select("Paste here")
+    tv.text(archive)
+    check_absent(f"{root}/{archive}")
+    tv.adb("pull", f"{root}/destination/{archive}", str(local_zip))
+    with zipfile.ZipFile(local_zip) as zipped:
+        if zipped.read(renamed) != payload.encode():
+            raise AssertionError("Moved archive content changed")
+    local_zip.unlink()
+    print("PASS release rename, copy, ZIP creation/extraction, delete/cancel and move", flush=True)
+
+
 def search_pagination(tv, output):
     tv.adb("shell", "appops", "set", "--uid", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
     tv.adb("shell", "mkdir", "-p", f"/sdcard/{FIXTURE_DIR}")
@@ -211,6 +310,7 @@ if __name__ == "__main__":
         ("picker", lambda: picker_cancellation(tv)),
         ("storage", lambda: storage_and_timing(tv, args.output)),
         ("search", lambda: search_pagination(tv, args.output)),
+        ("storage mutations", lambda: storage_mutations(tv, args.output)),
         ("release SMB", lambda: smb(tv, args.release, "release", args.smb_user, password)),
         ("debug SMB", lambda: smb(tv, args.debug, "debug", args.smb_user, password)),
     ]
