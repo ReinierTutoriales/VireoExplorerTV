@@ -241,9 +241,10 @@ internal fun ImageViewer(
             }
         }
         val colors = MaterialTheme.colorScheme
-        Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 if (images.size > 1) "${current.name} (${currentIndex + 1}/${images.size})" else current.name,
+                style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -344,7 +345,7 @@ internal fun ImageViewer(
                         Text(if (slideshow) "Stop slideshow" else "Slideshow")
                     }
                 }
-                Button(
+                OutlinedButton(
                     enabled = visual != null && zoom > 1f,
                     onClick = {
                         zoom = (zoom - .5f).coerceAtLeast(1f)
@@ -352,15 +353,15 @@ internal fun ImageViewer(
                         panY = clampPanOffset(panY, 0f, height, zoom)
                     }
                 ) { Text("Zoom −") }
-                Button(
+                OutlinedButton(
                     enabled = visual != null && zoom < 3f,
                     onClick = { zoom = (zoom + .5f).coerceAtMost(3f) }
                 ) { Text("Zoom +") }
                 if (zoom > 1f) {
                     OutlinedButton(onClick = { viewportFocus.requestFocus() }) { Text("Pan") }
                 }
-                Button(enabled = visual != null, onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate") }
-                Button(
+                OutlinedButton(enabled = visual != null, onClick = { rotation = (rotation + 90f) % 360f }) { Text("Rotate") }
+                OutlinedButton(
                     enabled = visual != null,
                     onClick = { zoom = 1f; rotation = 0f; panX = 0f; panY = 0f }
                 ) { Text("Reset") }

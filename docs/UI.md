@@ -28,3 +28,6 @@ Use native NavigationDrawer/NavigationDrawerItem for folder navigation as well a
 
 ## Binding continuous design audit
 Apply AGENTS.md modernization gate. All screens must follow current TV-specific official patterns rather than just current library versions. Reconcile local and remote UX, icon provenance, actual screenshots, D-pad acceptance and resolved dependency cleanup; treat earlier numeric layout choices as implementation defaults, not immutable Google requirements.
+
+## Viewer and audit evidence
+Use native TV Material typography and action hierarchy for viewers and dialogs; use local vector symbols instead of text glyphs. CI exports resolved debug/release runtime dependency graphs and Compose dependencyInsight, plus actual screenshots from runtime checks. Inspect artifacts before accepting design; capture does not prove visual quality. Official references: https://developer.android.com/training/tv/playback/compose/layouts ; https://developer.android.com/design/ui/tv/guides/components/buttons ; https://docs.gradle.org/current/userguide/viewing_debugging_dependencies.html .

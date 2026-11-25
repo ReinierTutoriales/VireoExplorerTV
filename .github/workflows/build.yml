@@ -54,6 +54,18 @@ jobs:
       - name: Check runtime test syntax
         run: python3 -m py_compile tests/tv_runtime.py
       - run: gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :tv-test:assembleDebug --stacktrace
+      - name: Record resolved dependency graphs
+        run: |
+          mkdir -p dependency-evidence
+          for configuration in debugRuntimeClasspath releaseRuntimeClasspath; do
+            gradle :app:dependencies --configuration "$configuration" --console=plain > "dependency-evidence/$configuration.txt"
+          done
+          gradle :app:dependencyInsight --configuration releaseRuntimeClasspath --dependency androidx.compose --console=plain > dependency-evidence/compose-insight.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: VireoExplorerTV-dependencies
+          path: dependency-evidence
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
           name: VireoExplorerTV-minified-test

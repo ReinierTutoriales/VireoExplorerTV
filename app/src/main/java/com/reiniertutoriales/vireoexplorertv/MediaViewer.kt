@@ -10,7 +10,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.sp
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.Alignment
@@ -347,27 +346,29 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
                 Box(Modifier.weight(1f).aspectRatio(1f).background(Color(0xFF121212)), contentAlignment = Alignment.Center) {
                     val bitmap = cover
                     if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Album artwork", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                    else Text("♪", fontSize = 64.sp)
+                    else androidx.tv.material3.Icon(androidx.compose.ui.res.painterResource(R.drawable.symbol_music_note), null,
+                        modifier = Modifier.size(100.dp), tint = MaterialTheme.colorScheme.primary)
                 }
                 Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, fontSize = 32.sp, maxLines = 2)
-                    metadata.artist?.toString()?.let { Text(it, fontSize = 24.sp, maxLines = 2) }
-                    metadata.albumTitle?.toString()?.let { Text(it, fontSize = 18.sp, maxLines = 2) }
+                    Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, style = MaterialTheme.typography.headlineLarge, maxLines = 2)
+                    metadata.artist?.toString()?.let { Text(it, style = MaterialTheme.typography.titleLarge, maxLines = 2) }
+                    metadata.albumTitle?.toString()?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2) }
                 }
             }
         }
         if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
         if (controlsVisible || buffering || error != null) Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).padding(16.dp)
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).padding(horizontal = 40.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-        if (video) Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (video) Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         if (buffering) Text("Buffering…")
         if (video && !firstFrame && error == null && !buffering && !ended) Text("Waiting for video…")
         (error ?: subtitleError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (durationMs > 0) {
             val fraction = (positionMs.toDouble() / durationMs).coerceIn(0.0, 1.0).toFloat()
             VireoProgressBar(progress = fraction, modifier = Modifier.padding(vertical = 4.dp))
-            Text(playbackTime(positionMs) + " / " + playbackTime(durationMs))
+            Text(playbackTime(positionMs) + " / " + playbackTime(durationMs), style = MaterialTheme.typography.labelMedium)
         }
         val p = player
         if (showInfo) {

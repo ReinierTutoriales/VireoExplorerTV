@@ -25,6 +25,12 @@ class Tv:
     def adb(self, *args):
         return subprocess.check_output(["adb", "-s", self.serial, *args], text=True, timeout=60)
 
+    def screenshot(self, path):
+        data = subprocess.check_output(["adb", "-s", self.serial, "exec-out", "screencap", "-p"], timeout=60)
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise AssertionError("Invalid screenshot PNG")
+        path.write_bytes(data)
+
     def key(self, name, long=False):
         flags = ("--longpress",) if long else ()
         self.adb("shell", "input", "keyevent", *flags, f"KEYCODE_{name}")
@@ -451,6 +457,7 @@ if __name__ == "__main__":
     for label, check in checks:
         try:
             check()
+            tv.screenshot(args.output / f"{label.replace(' ', '-')}-success.png")
         except Exception:
             failures.append(label)
             trace = traceback.format_exc()
