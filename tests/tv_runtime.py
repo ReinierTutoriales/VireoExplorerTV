@@ -29,6 +29,16 @@ class Tv:
         flags = ("--longpress",) if long else ()
         self.adb("shell", "input", "keyevent", *flags, f"KEYCODE_{name}")
 
+    def storage_access(self, allowed):
+        api = int(self.adb("shell", "getprop", "ro.build.version.sdk").strip())
+        if api >= 30:
+            self.adb("shell", "appops", "set", "--uid", PACKAGE,
+                     "MANAGE_EXTERNAL_STORAGE", "allow" if allowed else "default")
+        else:
+            for permission in ("READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"):
+                self.adb("shell", "pm", "grant" if allowed else "revoke",
+                         PACKAGE, f"android.permission.{permission}")
+
     def launch(self):
         self.adb("shell", "am", "force-stop", PACKAGE)
         result = self.adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity")
@@ -121,7 +131,7 @@ class Tv:
 
 
 def picker_cancellation(tv):
-    tv.adb("shell", "appops", "set", "--uid", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "default")
+    tv.storage_access(False)
     tv.launch()
     tv.text("Internal", focused=True)
     tv.key("DPAD_RIGHT")
@@ -140,7 +150,7 @@ def picker_cancellation(tv):
 
 
 def storage_and_timing(tv, output):
-    tv.adb("shell", "appops", "set", "--uid", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
+    tv.storage_access(True)
     tv.adb("shell", f"mkdir -p /sdcard/{FIXTURE_DIR}; touch /sdcard/{FIXTURE_DIR}/{FIXTURE_FILE}")
     starts = [tv.launch() for _ in range(5)]
     measured = [value for value in starts if value is not None]
@@ -173,7 +183,7 @@ def storage_mutations(tv, output):
     source = "source.txt"
     renamed = "source.txt-renamed"
     payload = "Vireo mutation integrity fixture"
-    tv.adb("shell", "appops", "set", "--uid", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
+    tv.storage_access(True)
     # All paths are constant and restricted to this disposable emulator fixture.
     tv.adb("shell", f"mkdir -p {root}/destination; printf '%s' '{payload}' > {root}/{source}")
     tv.launch()
@@ -262,7 +272,7 @@ def storage_mutations(tv, output):
 
 
 def search_pagination(tv, output):
-    tv.adb("shell", "appops", "set", "--uid", PACKAGE, "MANAGE_EXTERNAL_STORAGE", "allow")
+    tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", f"/sdcard/{FIXTURE_DIR}")
     tv.adb("shell", f"for i in $(seq 1 720); do touch /sdcard/{FIXTURE_DIR}/bulk-$i.txt; done")
     tv.launch()
