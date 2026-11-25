@@ -334,7 +334,18 @@ def video_playback(tv, label):
     tv.key("MEDIA_PAUSE")
     tv.text("Play")
     tv.select("Info", strict=True)
-    tv.text("Video rendered")
+    started = time.monotonic()
+    deadline = started + 30
+    while True:
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if "Video rendered" in labels:
+            break
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} playback error: {labels}")
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} first frame exceeded 30s: {labels}")
+        time.sleep(0.25)
+    print(f"{label} first frame observation after opening Info: {time.monotonic() - started:.2f}s", flush=True)
     tv.select("Info", strict=True)
     tv.select("Subtitles", strict=True)
     tv.text("Close tracks", focused=True)
