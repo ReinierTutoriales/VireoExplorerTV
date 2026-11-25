@@ -51,6 +51,17 @@ class Tv:
             time.sleep(2)
         raise TimeoutError(f"Emulator readiness deadline exceeded: {last}")
 
+    def configure_fixture_verification(self):
+        # Only our disposable CI emulator; never change verification on a real device.
+        if not re.fullmatch(r"emulator-\d+", self.serial) or os.environ.get("GITHUB_ACTIONS") != "true":
+            raise RuntimeError("Fixture verification override requires a disposable GitHub Actions emulator")
+        self.wait_ready()
+        self.setup_command("shell", "settings", "put", "global", "verifier_verify_adb_installs", "0")
+        value = self.setup_command("shell", "settings", "get", "global", "verifier_verify_adb_installs").strip()
+        if value != "0":
+            raise AssertionError(f"ADB fixture verification override not applied: {value}")
+        print("External verifier disabled for ADB fixture installs on disposable CI emulator", flush=True)
+
     def install(self, apk):
         # Reinstalling the same fixture on an isolated emulator is safe.
         # Never retry a deterministic package/signature/install error.
@@ -543,6 +554,7 @@ if __name__ == "__main__":
     password = os.environ["VIREO_TEST_SMB_PASSWORD"]
     args.output.mkdir(parents=True, exist_ok=True)
     try:
+        tv.configure_fixture_verification()
         tv.install(args.hierarchy)
         tv.install(args.release)
     except Exception:
@@ -551,7 +563,9 @@ if __name__ == "__main__":
             ("adb-devices", ["adb", "devices", "-l"]),
             ("boot-state", ["adb", "-s", args.serial, "shell", "getprop", "sys.boot_completed"]),
             ("package-manager", ["adb", "-s", args.serial, "shell", "pm", "path", "android"]),
-            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-d", "-t", "1500"]),
+            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-d", "-t", "3000"]),
+            ("disk-space", ["adb", "-s", args.serial, "shell", "df", "-h", "/data"]),
+            ("installer-state", ["adb", "-s", args.serial, "shell", "dumpsys", "package", "installs"]),
         ]:
             try:
                 result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
