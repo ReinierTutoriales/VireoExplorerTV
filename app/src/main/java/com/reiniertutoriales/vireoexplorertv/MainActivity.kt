@@ -169,10 +169,13 @@ class MainActivity : ComponentActivity() {
             try {
                 val data = checkNotNull(result.data)
                 val uri = checkNotNull(data.data)
-                val granted = data.flags and
-                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                check(granted and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
-                contentResolver.takePersistableUriPermission(uri, granted)
+                check(data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+                val grants = if (data.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) {
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                } else {
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                contentResolver.takePersistableUriPermission(uri, grants)
                 refreshFolderGrants()
                 folderPickerNotice = null
                 model.path = listOf(storage.root(uri) to DocumentsContract.getTreeDocumentId(uri))

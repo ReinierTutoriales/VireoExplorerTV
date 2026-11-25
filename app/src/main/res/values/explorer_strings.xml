@@ -30,7 +30,7 @@
     <string name="explorer_usb_unavailable">No USB storage detected. Connect a drive and try again.</string>
     <string name="explorer_no_category_files">No files of this type in this folder.</string>
     <string name="explorer_grant_storage_title">Enable TV storage access</string>
-    <string name="explorer_grant_storage_subtitle">Required on Android TV to view internal files, USB drives, categories &amp; cleaner</string>
+    <string name="explorer_grant_storage_subtitle">Browse shared storage and USB drives directly.</string>
     <string name="explorer_grant_storage_action">Allow access</string>
     <string name="explorer_remove_favorite">Remove favorite</string>
     <string name="explorer_clear_recent">Clear recent</string>

@@ -30,7 +30,7 @@
     <string name="explorer_usb_unavailable">No se detectó almacenamiento USB. Conecta una unidad y vuelve a intentarlo.</string>
     <string name="explorer_no_category_files">No se encontraron archivos de esta categoría.</string>
     <string name="explorer_grant_storage_title">Activar acceso a archivos de la TV</string>
-    <string name="explorer_grant_storage_subtitle">Necesario en Android TV para abrir el almacenamiento interno, USB, categorías y limpiador</string>
+    <string name="explorer_grant_storage_subtitle">Explora directamente el almacenamiento compartido y las unidades USB.</string>
     <string name="explorer_grant_storage_action">Permitir acceso</string>
     <string name="explorer_remove_favorite">Quitar de favoritos</string>
     <string name="explorer_clear_recent">Borrar recientes</string>
