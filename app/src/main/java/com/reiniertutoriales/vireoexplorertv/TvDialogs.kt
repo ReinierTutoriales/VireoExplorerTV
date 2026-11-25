@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
@@ -33,13 +34,22 @@ internal fun TvTextField(
     inputFocusRequester: FocusRequester? = null,
     password: Boolean = false,
     imeAction: ImeAction = ImeAction.Next,
-    onDone: (() -> Unit)? = null
+    onDone: (() -> Unit)? = null,
+    downFocusRequester: FocusRequester? = null
 ) {
     val colors = MaterialTheme.colorScheme
     var isFocused by remember { mutableStateOf(false) }
     val fieldModifier = Modifier
         .fillMaxWidth()
         .then(if (inputFocusRequester != null) Modifier.focusRequester(inputFocusRequester) else Modifier)
+        .then(
+            if (downFocusRequester != null) Modifier.onPreviewKeyEvent { event ->
+                val key = event.nativeKeyEvent
+                key.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
+                    key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0 &&
+                    downFocusRequester.requestFocus()
+            } else Modifier
+        )
         .onFocusChanged { isFocused = it.isFocused }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -263,10 +263,10 @@ private fun ExplorerTile(
             pressedContainerColor = colors.primary,
             pressedContentColor = colors.onPrimary
         ),
-        scale = CardDefaults.scale(focusedScale = 1.02f),
+        scale = CardDefaults.scale(focusedScale = 1.05f),
         border = CardDefaults.border(
             border = Border(BorderStroke(1.dp, colors.borderVariant), shape = shape),
-            focusedBorder = Border(BorderStroke(2.dp, colors.primary), shape = shape)
+            focusedBorder = Border(BorderStroke(3.dp, colors.primary), shape = shape)
         )
     ) {
         Row(

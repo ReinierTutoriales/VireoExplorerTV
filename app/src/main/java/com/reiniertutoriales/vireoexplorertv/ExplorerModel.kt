@@ -350,6 +350,7 @@ internal class ExplorerModel(application: Application, private val savedState: S
 
     fun mutate(action: suspend () -> Unit) {
         if (mutating) return
+        error = null
         mutating = true
         viewModelScope.launch {
             try { action(); selected = null; revision++ }
