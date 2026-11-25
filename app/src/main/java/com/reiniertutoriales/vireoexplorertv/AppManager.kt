@@ -143,6 +143,8 @@ internal fun AppManager(
     var capacity by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var ownCacheBytes by remember { mutableLongStateOf(0L) }
     var quickTempScan by remember { mutableStateOf<QuickTempScan?>(null) }
+    var applicationsPage by rememberSaveable { mutableStateOf(true) }
+    var chosenApp by remember { mutableStateOf<InstalledApp?>(null) }
     var loading by remember { mutableStateOf(true) }
     var sizes by remember { mutableStateOf<Map<String, AppSize>>(emptyMap()) }
     var lastUsed by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
@@ -169,7 +171,9 @@ internal fun AppManager(
     }
 
     val primaryFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { primaryFocus.requestFocus() }
+    LaunchedEffect(applicationsPage, loading, showSystem) {
+        if (!applicationsPage || !loading) primaryFocus.requestFocus()
+    }
     BackHandler(onBack = onClose)
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -197,7 +201,8 @@ internal fun AppManager(
         finally { loading = false }
     }
 
-    LaunchedEffect(revision, directGranted) {
+    LaunchedEffect(revision, directGranted, applicationsPage) {
+        if (applicationsPage) return@LaunchedEffect
         quickTempScan = null
         try {
             val (cap, cacheBytes, tempReport) = withContext(Dispatchers.IO) {
@@ -281,360 +286,400 @@ internal fun AppManager(
         error?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodyMedium) }
         statusNotice?.let { Text(it, color = colors.primary, style = MaterialTheme.typography.bodyMedium) }
 
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 20.dp)
-        ) {
-            item {
-                capacity?.let { (total, free) ->
-                    val used = (total - free).coerceAtLeast(0L)
-                    val fraction = if (total > 0L) (used.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
-                    Surface(
-                        shape = VireoCardShape,
-                        colors = SurfaceDefaults.colors(
-                            containerColor = colors.surface,
-                            contentColor = colors.onSurface
-                        ),
-                        border = restingBorder,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(20.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    stringResource(R.string.cleaner_internal_card_title),
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    "${(fraction * 100).toInt()}%",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = colors.primary
-                                )
-                            }
-                            VireoProgressBar(progress = fraction)
-                            Text(
-                                stringResource(
-                                    R.string.cleaner_storage_summary,
-                                    Formatter.formatFileSize(context, used),
-                                    Formatter.formatFileSize(context, total),
-                                    Formatter.formatFileSize(context, free)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ExplorerOption(selected = applicationsPage, onClick = { applicationsPage = true },
+                leadingIcon = { ExplorerIcon(R.drawable.symbol_android) }) {
+                Text(stringResource(R.string.manager_applications))
+            }
+            ExplorerOption(selected = !applicationsPage, onClick = { applicationsPage = false },
+                leadingIcon = { ExplorerIcon(R.drawable.symbol_cleaning_services) }) {
+                Text(stringResource(R.string.manager_cleanup))
+            }
+        }
+        val launchUnavailable = stringResource(R.string.manager_launch_unavailable)
+        chosenApp?.let { app ->
+            AppActionsDialog(
+                name = app.name,
+                packageName = app.pkg,
+                onOpen = {
+                    val pm = context.packageManager
+                    val intent = pm.getLeanbackLaunchIntentForPackage(app.pkg)
+                        ?: pm.getLaunchIntentForPackage(app.pkg)
+                    if (intent == null) error = launchUnavailable
+                    else open(intent)
+                    chosenApp = null
+                },
+                onSettings = {
+                    open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null)))
+                    chosenApp = null
+                },
+                onDismiss = { chosenApp = null }
+            )
+        }
+
+        key(applicationsPage) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
+            ) {
+                if (!applicationsPage) {
+                    item {
+                        capacity?.let { (total, free) ->
+                            val used = (total - free).coerceAtLeast(0L)
+                            val fraction = if (total > 0L) (used.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
+                            Surface(
+                                shape = VireoCardShape,
+                                colors = SurfaceDefaults.colors(
+                                    containerColor = colors.surface,
+                                    contentColor = colors.onSurface
                                 ),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colors.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                val tempSummaryText = when {
-                    !directGranted -> stringResource(R.string.explorer_grant_storage_subtitle)
-                    quickTempScan == null -> stringResource(R.string.cleaner_quick_temp_scanning)
-                    else -> stringResource(
-                        R.string.cleaner_quick_temp_ready,
-                        quickTempScan!!.totalCount,
-                        Formatter.formatFileSize(context, quickTempScan!!.tempBytes),
-                        Formatter.formatFileSize(context, ownCacheBytes)
-                    )
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Card(
-                        onClick = {
-                            if (!directGranted) {
-                                onRequestStorageAccess()
-                            } else {
-                                scope.launch {
-                                    trimThumbnailCache(android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
-                                    val (deletedCount, freedBytes) = withContext(Dispatchers.IO) {
-                                        var count = 0
-                                        var freed = 0L
-                                        val (c1, b1) = clearDirectoryContents(context.cacheDir)
-                                        val (c2, b2) = clearDirectoryContents(context.externalCacheDir)
-                                        count += c1 + c2
-                                        freed += b1 + b2
-                                        val currentScan = scanQuickTemporaryFiles(primaryDirectStorageDir())
-                                        for (file in currentScan.tempFiles) {
-                                            val sz = file.length().coerceAtLeast(0L)
-                                            if (file.delete()) {
-                                                count++
-                                                freed += sz
-                                            }
-                                        }
-                                        for (dir in currentScan.emptyDirs) {
-                                            if (dir.listFiles()?.isEmpty() == true && dir.delete()) {
-                                                count++
-                                            }
-                                        }
-                                        count to freed
+                                border = restingBorder,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(20.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            stringResource(R.string.cleaner_internal_card_title),
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Text(
+                                            "${(fraction * 100).toInt()}%",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = colors.primary
+                                        )
                                     }
-                                    statusNotice = "$deletedCount items cleaned (${Formatter.formatFileSize(context, freedBytes)})"
-                                    revision++
-                                }
-                            }
-                        },
-                        modifier = Modifier.weight(1f).focusRequester(primaryFocus),
-                        shape = CardDefaults.shape(VireoCardShape),
-                        colors = CardDefaults.colors(
-                            containerColor = colors.surface,
-                            contentColor = colors.onSurface,
-                            focusedContainerColor = colors.primaryContainer,
-                            focusedContentColor = colors.onPrimaryContainer
-                        ),
-                        border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
-                        scale = CardDefaults.scale(focusedScale = 1.02f)
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(18.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                ExplorerIcon(R.drawable.symbol_cleaning_services)
-                            }
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    if (directGranted) stringResource(R.string.cleaner_quick_temp_title)
-                                    else stringResource(R.string.explorer_grant_storage_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    tempSummaryText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-
-                    Card(
-                        onClick = {
-                            if (directInternalUri != null) {
-                                onAnalyze(directInternalUri)
-                            } else {
-                                onRequestStorageAccess()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = CardDefaults.shape(VireoCardShape),
-                        colors = CardDefaults.colors(
-                            containerColor = colors.surface,
-                            contentColor = colors.onSurface,
-                            focusedContainerColor = colors.primaryContainer,
-                            focusedContentColor = colors.onPrimaryContainer
-                        ),
-                        border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
-                        scale = CardDefaults.scale(focusedScale = 1.02f)
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(18.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                ExplorerIcon(R.drawable.symbol_hard_drive)
-                            }
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    stringResource(R.string.cleaner_scan_internal),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    stringResource(R.string.cleaner_scan_internal_subtitle),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (safRoots.isNotEmpty()) {
-                items(safRoots, key = { "cleanup:$it" }) { root ->
-                    ListItem(
-                        selected = false,
-                        onClick = { onAnalyze(root) },
-                        leadingContent = {
-                            Box(
-                                Modifier.size(40.dp).background(colors.surfaceVariant, VireoPillShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                ExplorerIcon(R.drawable.symbol_folder)
-                            }
-                        },
-                        headlineContent = {
-                            Text(DocumentsContract.getTreeDocumentId(root), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        },
-                        supportingContent = {
-                            Text(stringResource(R.string.explorer_analyze_folder), color = colors.onSurfaceVariant)
-                        },
-                        shape = ListItemDefaults.shape(VireoCardShape),
-                        border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
-                    )
-                }
-            }
-
-            item {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        stringResource(R.string.cleaner_apps_section, visibleApps.size),
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    ExplorerOption(
-                        selected = showSystem,
-                        onClick = { showSystem = !showSystem }
-                    ) {
-                        Text(stringResource(R.string.cleaner_show_system))
-                    }
-                    ExplorerOption(
-                        selected = false,
-                        onClick = { sort = (sort + 1) % 4 }
-                    ) {
-                        Text(sortLabels[sort])
-                    }
-                    if (Build.VERSION.SDK_INT >= 26) {
-                        ExplorerOption(
-                            selected = measuring,
-                            enabled = !loading && !measuring,
-                            onClick = {
-                                statsJob?.cancel()
-                                measuring = true
-                                sizes = emptyMap()
-                                lastUsed = emptyMap()
-                                val snapshot = apps
-                                statsJob = scope.launch {
-                                    try {
-                                        sizes = withContext(Dispatchers.IO) {
-                                            buildMap {
-                                                for (app in snapshot) {
-                                                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                                                    try {
-                                                        put(app.pkg, applicationStorage(context, app.pkg))
-                                                    } catch (e: CancellationException) {
-                                                        throw e
-                                                    } catch (_: Exception) {
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        lastUsed = withContext(Dispatchers.IO) {
-                                            try {
-                                                val manager = context.getSystemService(android.app.usage.UsageStatsManager::class.java)
-                                                val now = System.currentTimeMillis()
-                                                manager?.queryAndAggregateUsageStats(now - 30L * 24 * 60 * 60 * 1000, now)
-                                                    .orEmpty().mapValues { it.value.lastTimeUsed }.filterValues { it > 0L }
-                                            } catch (_: SecurityException) {
-                                                emptyMap()
-                                            }
-                                        }
-                                        if (sizes.isEmpty()) {
-                                            error = "Enable usage access to calculate app & cache sizes"
-                                        }
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (_: Exception) {
-                                        error = "Enable usage access to calculate app & cache sizes"
-                                    } finally {
-                                        measuring = false
-                                    }
-                                }
-                            }
-                        ) {
-                            Text(stringResource(R.string.cleaner_measure_apps))
-                        }
-                    }
-                    ExplorerOption(
-                        selected = false,
-                        onClick = { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-                    ) {
-                        Text(stringResource(R.string.cleaner_usage_access))
-                    }
-                }
-            }
-
-            items(visibleApps, key = { it.pkg }) { app ->
-                val appSize = sizes[app.pkg]
-                val usedDate = lastUsed[app.pkg]?.let {
-                    DateFormat.getDateFormat(context).format(Date(it))
-                }
-                ListItem(
-                    selected = false,
-                    onClick = {
-                        open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null)))
-                    },
-                    leadingContent = {
-                        Box(
-                            Modifier.size(44.dp).background(colors.surfaceVariant, VireoPillShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            ExplorerIcon(R.drawable.symbol_android)
-                        }
-                    },
-                    headlineContent = {
-                        Text(app.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                    },
-                    supportingContent = {
-                        val sub = if (usedDate != null) "${app.pkg} · $usedDate" else app.pkg
-                        Text(sub, maxLines = 1, overflow = TextOverflow.Ellipsis, color = colors.onSurfaceVariant)
-                    },
-                    trailingContent = if (appSize != null) {
-                        {
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    Formatter.formatFileSize(context, appSize.total),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = colors.primary
-                                )
-                                if (appSize.cache > 0L) {
+                                    VireoProgressBar(progress = fraction)
                                     Text(
-                                        "Cache: " + Formatter.formatFileSize(context, appSize.cache),
-                                        style = MaterialTheme.typography.bodySmall,
+                                        stringResource(
+                                            R.string.cleaner_storage_summary,
+                                            Formatter.formatFileSize(context, used),
+                                            Formatter.formatFileSize(context, total),
+                                            Formatter.formatFileSize(context, free)
+                                        ),
+                                        style = MaterialTheme.typography.bodyMedium,
                                         color = colors.onSurfaceVariant
                                     )
                                 }
                             }
                         }
-                    } else null,
-                    shape = ListItemDefaults.shape(VireoCardShape),
-                    colors = ListItemDefaults.colors(
-                        containerColor = colors.surface,
-                        contentColor = colors.onSurface,
-                        focusedContainerColor = colors.surfaceVariant,
-                        focusedContentColor = colors.onSurface
-                    ),
-                    border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder),
-                    scale = ListItemDefaults.scale(focusedScale = 1.01f)
-                )
+                    }
+
+                    item {
+                        val tempSummaryText = when {
+                            !directGranted -> stringResource(R.string.explorer_grant_storage_subtitle)
+                            quickTempScan == null -> stringResource(R.string.cleaner_quick_temp_scanning)
+                            else -> stringResource(
+                                R.string.cleaner_quick_temp_ready,
+                                quickTempScan!!.totalCount,
+                                Formatter.formatFileSize(context, quickTempScan!!.tempBytes),
+                                Formatter.formatFileSize(context, ownCacheBytes)
+                            )
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Card(
+                                onClick = {
+                                    if (!directGranted) {
+                                        onRequestStorageAccess()
+                                    } else {
+                                        scope.launch {
+                                            trimThumbnailCache(android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
+                                            val (deletedCount, freedBytes) = withContext(Dispatchers.IO) {
+                                                var count = 0
+                                                var freed = 0L
+                                                val (c1, b1) = clearDirectoryContents(context.cacheDir)
+                                                val (c2, b2) = clearDirectoryContents(context.externalCacheDir)
+                                                count += c1 + c2
+                                                freed += b1 + b2
+                                                val currentScan = scanQuickTemporaryFiles(primaryDirectStorageDir())
+                                                for (file in currentScan.tempFiles) {
+                                                    val sz = file.length().coerceAtLeast(0L)
+                                                    if (file.delete()) {
+                                                        count++
+                                                        freed += sz
+                                                    }
+                                                }
+                                                for (dir in currentScan.emptyDirs) {
+                                                    if (dir.listFiles()?.isEmpty() == true && dir.delete()) {
+                                                        count++
+                                                    }
+                                                }
+                                                count to freed
+                                            }
+                                            statusNotice = "$deletedCount items cleaned (${Formatter.formatFileSize(context, freedBytes)})"
+                                            revision++
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f).focusRequester(primaryFocus),
+                                shape = CardDefaults.shape(VireoCardShape),
+                                colors = CardDefaults.colors(
+                                    containerColor = colors.surface,
+                                    contentColor = colors.onSurface,
+                                    focusedContainerColor = colors.primaryContainer,
+                                    focusedContentColor = colors.onPrimaryContainer
+                                ),
+                                border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                                scale = CardDefaults.scale(focusedScale = 1.02f)
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(18.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        ExplorerIcon(R.drawable.symbol_cleaning_services)
+                                    }
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            if (directGranted) stringResource(R.string.cleaner_quick_temp_title)
+                                            else stringResource(R.string.explorer_grant_storage_title),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            tempSummaryText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = colors.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
+                            Card(
+                                onClick = {
+                                    if (directInternalUri != null) {
+                                        onAnalyze(directInternalUri)
+                                    } else {
+                                        onRequestStorageAccess()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = CardDefaults.shape(VireoCardShape),
+                                colors = CardDefaults.colors(
+                                    containerColor = colors.surface,
+                                    contentColor = colors.onSurface,
+                                    focusedContainerColor = colors.primaryContainer,
+                                    focusedContentColor = colors.onPrimaryContainer
+                                ),
+                                border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                                scale = CardDefaults.scale(focusedScale = 1.02f)
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(18.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        ExplorerIcon(R.drawable.symbol_hard_drive)
+                                    }
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            stringResource(R.string.cleaner_scan_internal),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            stringResource(R.string.cleaner_scan_internal_subtitle),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = colors.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (safRoots.isNotEmpty()) {
+                        items(safRoots, key = { "cleanup:$it" }) { root ->
+                            ListItem(
+                                selected = false,
+                                onClick = { onAnalyze(root) },
+                                leadingContent = {
+                                    Box(
+                                        Modifier.size(40.dp).background(colors.surfaceVariant, VireoPillShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        ExplorerIcon(R.drawable.symbol_folder)
+                                    }
+                                },
+                                headlineContent = {
+                                    Text(DocumentsContract.getTreeDocumentId(root), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                },
+                                supportingContent = {
+                                    Text(stringResource(R.string.explorer_analyze_folder), color = colors.onSurfaceVariant)
+                                },
+                                shape = ListItemDefaults.shape(VireoCardShape),
+                                border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder)
+                            )
+                        }
+                    }
+
+                }
+                if (applicationsPage) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                stringResource(R.string.cleaner_apps_section, visibleApps.size),
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            ExplorerOption(
+                                selected = showSystem,
+                                onClick = { showSystem = !showSystem }
+                            ) {
+                                Text(stringResource(R.string.cleaner_show_system))
+                            }
+                            ExplorerOption(
+                                selected = false,
+                                onClick = { sort = (sort + 1) % 4 }
+                            ) {
+                                Text(sortLabels[sort])
+                            }
+                            if (Build.VERSION.SDK_INT >= 26) {
+                                ExplorerOption(
+                                    selected = measuring,
+                                    enabled = !loading && !measuring,
+                                    onClick = {
+                                        statsJob?.cancel()
+                                        measuring = true
+                                        sizes = emptyMap()
+                                        lastUsed = emptyMap()
+                                        val snapshot = apps
+                                        statsJob = scope.launch {
+                                            try {
+                                                sizes = withContext(Dispatchers.IO) {
+                                                    buildMap {
+                                                        for (app in snapshot) {
+                                                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                                            try {
+                                                                put(app.pkg, applicationStorage(context, app.pkg))
+                                                            } catch (e: CancellationException) {
+                                                                throw e
+                                                            } catch (_: Exception) {
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                lastUsed = withContext(Dispatchers.IO) {
+                                                    try {
+                                                        val manager = context.getSystemService(android.app.usage.UsageStatsManager::class.java)
+                                                        val now = System.currentTimeMillis()
+                                                        manager?.queryAndAggregateUsageStats(now - 30L * 24 * 60 * 60 * 1000, now)
+                                                            .orEmpty().mapValues { it.value.lastTimeUsed }.filterValues { it > 0L }
+                                                    } catch (_: SecurityException) {
+                                                        emptyMap()
+                                                    }
+                                                }
+                                                if (sizes.isEmpty()) {
+                                                    error = "Enable usage access to calculate app & cache sizes"
+                                                }
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (_: Exception) {
+                                                error = "Enable usage access to calculate app & cache sizes"
+                                            } finally {
+                                                measuring = false
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.cleaner_measure_apps))
+                                }
+                            }
+                            ExplorerOption(
+                                selected = false,
+                                onClick = { open(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                            ) {
+                                Text(stringResource(R.string.cleaner_usage_access))
+                            }
+                        }
+                    }
+
+                    if (loading) item { Text(stringResource(R.string.manager_loading)) }
+                    if (!loading && visibleApps.isEmpty()) item {
+                        OutlinedButton(modifier = Modifier.focusRequester(primaryFocus),
+                            onClick = { showSystem = !showSystem }) {
+                            Text(stringResource(R.string.cleaner_show_system))
+                        }
+                    }
+                    items(visibleApps, key = { it.pkg }) { app ->
+                        val appSize = sizes[app.pkg]
+                        val usedDate = lastUsed[app.pkg]?.let {
+                            DateFormat.getDateFormat(context).format(Date(it))
+                        }
+                        ListItem(
+                            selected = false,
+                            onClick = {
+                                chosenApp = app
+                            },
+                            modifier = Modifier.then(
+                                if (app == visibleApps.firstOrNull()) Modifier.focusRequester(primaryFocus) else Modifier
+                            ),
+                            leadingContent = { InstalledAppIcon(app.pkg, revision) },
+                            headlineContent = {
+                                Text(app.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                            },
+                            supportingContent = {
+                                val sub = if (usedDate != null) "${app.pkg} · $usedDate" else app.pkg
+                                Text(sub, maxLines = 1, overflow = TextOverflow.Ellipsis, color = colors.onSurfaceVariant)
+                            },
+                            trailingContent = if (appSize != null) {
+                                {
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            Formatter.formatFileSize(context, appSize.total),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = colors.primary
+                                        )
+                                        if (appSize.cache > 0L) {
+                                            Text(
+                                                "Cache: " + Formatter.formatFileSize(context, appSize.cache),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = colors.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            } else null,
+                            shape = ListItemDefaults.shape(VireoCardShape),
+                            colors = ListItemDefaults.colors(
+                                containerColor = colors.surface,
+                                contentColor = colors.onSurface,
+                                focusedContainerColor = colors.surfaceVariant,
+                                focusedContentColor = colors.onSurface
+                            ),
+                            border = ListItemDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                            scale = ListItemDefaults.scale(focusedScale = 1.01f)
+                        )
+                    }
+                }
             }
         }
     }

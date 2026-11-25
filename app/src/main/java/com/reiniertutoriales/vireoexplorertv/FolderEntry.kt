@@ -69,42 +69,33 @@ internal fun FolderEntry(
             ),
             scale = SelectableSurfaceDefaults.scale(focusedScale = 1.02f, focusedSelectedScale = 1.02f)
         ) {
-            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            Column(Modifier.fillMaxWidth()) {
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(16f / 10f).background(colors.surfaceVariant),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        Modifier
-                            .size(48.dp)
-                            .background(colors.surfaceVariant, VireoPillShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        FileThumbnail(entry, revision)
+                    if (entry.directory) {
+                        ExplorerIcon(R.drawable.symbol_folder, Modifier.size(64.dp))
+                    } else {
+                        FileThumbnail(entry, revision, Modifier.fillMaxSize())
                     }
                     if (selected) {
                         Box(
-                            Modifier.size(26.dp).background(colors.primary, VireoPillShape),
+                            Modifier.align(Alignment.TopEnd).padding(8.dp).size(28.dp)
+                                .background(colors.primary, VireoPillShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("✓", color = colors.onPrimary, style = MaterialTheme.typography.labelLarge)
+                            Text("✓", color = colors.onPrimary)
                         }
                     }
                 }
-                Text(
-                    entry.name,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall
-                )
-                Text(
-                    subtitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant
-                )
+                Column(Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall)
+                    Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                }
             }
         }
     } else {
