@@ -93,6 +93,17 @@ class Tv:
         if "mInputShown=true" in self.adb("shell", "dumpsys", "input_method"):
             self.key("BACK")
 
+    def submit_smb(self):
+        self.dismiss_keyboard()
+        for direction in ("DPAD_DOWN", "DPAD_DOWN", "DPAD_DOWN", "TAB", "TAB", "TAB", "TAB"):
+            self.key(direction)
+            for focused in self.tree().iter("node"):
+                if focused.get("focused") == "true" and any(node.get("text") == "Connect" for node in focused.iter("node")):
+                    print(f"SMB Connect focused through {direction}", flush=True)
+                    self.key("DPAD_CENTER")
+                    return
+        raise AssertionError("Cannot reach Connect from the SMB password field.")
+
     def edit(self, index, value):
         for _ in range(10):
             fields = [node for node in self.tree().iter("node") if node.get("class") == "android.widget.EditText"]
@@ -175,9 +186,7 @@ def smb(tv, fixture, variant, user, password):
     tv.text("Server host or IP")
     for index, value in [(0, "10.0.2.2"), (1, "vireoci"), (2, user), (4, password)]:
         tv.edit(index, value)
-    tv.key("DPAD_DOWN")
-    tv.text("Connect", focused=True)
-    tv.key("DPAD_CENTER")
+    tv.submit_smb()
     tv.text("vireo-smb-fixture.txt")
     print(f"PASS {variant} authenticated SMB directory listing", flush=True)
 
