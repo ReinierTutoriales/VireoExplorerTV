@@ -8,7 +8,13 @@ export PATH="$sdk/platform-tools:$sdk/emulator:$sdk/cmdline-tools/latest/bin:$PA
 export ANDROID_AVD_HOME="$RUNNER_TEMP/vireo-avd"
 mkdir -p "$ANDROID_AVD_HOME"
 image="system-images;android-${TV_API};android-tv;${TV_ARCH}"
+# sdkmanager --licenses is the documented non-GUI license workflow.
+# yes may receive SIGPIPE once sdkmanager finishes; preserve sdkmanager's status.
+set +o pipefail
+yes | sdkmanager --licenses
+set -o pipefail
 sdkmanager --install --channel=0 platform-tools emulator "$image"
+test -f "$sdk/system-images/android-${TV_API}/android-tv/${TV_ARCH}/package.xml"
 adb version
 emulator -version
 emulator -accel-check
