@@ -191,3 +191,9 @@ Saved local folders now match the internal-storage root using a complete directo
 The app inventory no longer waits for cache traversal and the quick temporary-file scan before loading. Both operations retain lifecycle cancellation and storage-scan exceptions produce a visible error. Local directory writability is queried on an IO dispatcher instead of during composition. Recursive category searches request unsorted children and sort only the final result, avoiding a sort for every visited directory. Starting another search clears the previous results and read failures produce an error.
 
 These changes remove identified work from the UI and inventory-loading paths. Runtime navigation, scan latency and frame timing still need validation on Android TV. They are not evidence that all tools or the visual design are accepted.
+
+## Application manager interaction redesign
+
+Applications and Cleanup have separate content areas and independent scrolling. The app inventory opens directly without waiting for, or starting, a temporary-file scan. App rows load actual package icons on demand at 96 pixels, with at most two icon tasks running concurrently. The generic Android icon is retained as a fallback when package resources are unavailable. Selecting an app exposes Open application and App information and storage. Launching prefers the TV launcher, with the regular launcher as fallback and a visible message for packages without either entry point.
+
+These changes alter the app-management flow. They still require visual and remote-control acceptance on Android TV. Source compilation and unit tests do not establish visual quality or device latency.

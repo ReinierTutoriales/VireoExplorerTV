@@ -113,4 +113,10 @@
         <item quantity="one">Move selection: %1$d file</item>
         <item quantity="other">Move selection: %1$d files</item>
     </plurals>
+    <string name="manager_applications">Applications</string>
+    <string name="manager_cleanup">Cleanup</string>
+    <string name="manager_open">Open application</string>
+    <string name="manager_settings">App information and storage</string>
+    <string name="manager_launch_unavailable">This app has no available launcher. Use app information to manage it.</string>
+    <string name="manager_loading">Loading applications…</string>
 </resources>
