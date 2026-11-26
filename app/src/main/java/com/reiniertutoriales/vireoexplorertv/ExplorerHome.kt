@@ -5,8 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +73,7 @@ internal fun ExplorerHome(
     val initialFocus = remember { FocusRequester() }
     LaunchedEffect(page) { initialFocus.requestFocus() }
     val colors = MaterialTheme.colorScheme
+    val listState = key(page) { rememberLazyListState() }
 
     ExplorerNavigation(page = page, onNavigate = onPage) {
         Column(
@@ -98,6 +101,7 @@ internal fun ExplorerHome(
             }
             LazyColumn(
                 Modifier.weight(1f),
+                state = listState,
                 contentPadding = PaddingValues(start = 6.dp, top = 6.dp, end = 8.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
