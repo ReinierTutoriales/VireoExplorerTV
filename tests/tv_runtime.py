@@ -468,7 +468,8 @@ def video_playback(tv, label, output):
     tv.select("Stretch", strict=True)
     tv.text("Fit")
     tv.key("MEDIA_PLAY")
-    tv.text("Pause")
+    # OK must pause after the overlay hides, even if a hierarchy capture
+    # would miss the brief visible playback controls.
     time.sleep(5)
     if any(n.get("text") == "Pause" for n in tv.tree().iter("node")):
         raise AssertionError("Video overlay did not hide")
