@@ -73,7 +73,7 @@ internal fun ExplorerHome(
     content: LazyListScope.() -> Unit
 ) {
     val initialFocus = remember { FocusRequester() }
-    LaunchedEffect(page) { initialFocus.requestFocus() }
+    LaunchedEffect(page, searchPage) { initialFocus.requestFocus() }
     val colors = MaterialTheme.colorScheme
 
     ExplorerNavigation(page = page, onNavigate = onPage) {
