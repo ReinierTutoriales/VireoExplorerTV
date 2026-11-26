@@ -30,7 +30,7 @@ class Tv:
             ["adb", "-s", self.serial, *args], text=True,
             stderr=subprocess.STDOUT, timeout=timeout)
 
-    def wait_ready(self, timeout=120):
+    def wait_ready(self, timeout=240):
         deadline = time.monotonic() + timeout
         consecutive = 0
         last = "not ready"
@@ -51,25 +51,20 @@ class Tv:
             time.sleep(2)
         raise TimeoutError(f"Emulator readiness deadline exceeded: {last}")
 
+    def configure_runtime(self):
+        # Apply only after Android framework services are responsive.
+        self.wait_ready()
+        for name in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
+            self.setup_command("shell", "settings", "put", "global", name, "0")
+            if float(self.setup_command("shell", "settings", "get", "global", name).strip()) != 0:
+                raise AssertionError(f"Animation setting not applied: {name}")
+        print("Runtime animation settings verified", flush=True)
+
     def install(self, apk):
-        # Reinstalling the same fixture on an isolated emulator is safe.
-        # Never retry a deterministic package/signature/install error.
-        for attempt in range(2):
-            self.wait_ready()
-            try:
-                result = self.setup_command("install", "-r", apk, timeout=90)
-                if "Success" not in result.splitlines():
-                    raise AssertionError(f"APK installation failed: {result}")
-                return
-            except subprocess.TimeoutExpired:
-                if attempt:
-                    raise
-            except subprocess.CalledProcessError as error:
-                output = (error.output or "").lower()
-                if attempt or not any(reason in output for reason in
-                                      ("device offline", "device not found", "transport error", "connection reset", "closed")):
-                    raise
-            print(f"Transient ADB install failure for {apk}; rechecking readiness once", flush=True)
+        self.wait_ready()
+        result = self.setup_command("install", "--no-streaming", "-r", apk, timeout=90)
+        if "Success" not in result.splitlines():
+            raise AssertionError(f"APK installation failed: {result}")
 
     def screenshot(self, path):
         data = subprocess.check_output(["adb", "-s", self.serial, "exec-out", "screencap", "-p"], timeout=60)
@@ -446,11 +441,56 @@ def video_playback(tv, label, output):
     print(f"PASS {label} video rendered, subtitle cue, aspect modes, auto-hide and OK pause", flush=True)
 
 
+def multitrack_playback(tv, label, output):
+    tv.select("vireo-multitrack.mkv", strict=True)
+    deadline = time.monotonic() + 30
+    while True:
+        tv.key("MEDIA_PAUSE")
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} MKV playback error: {labels}")
+        if "Play" in labels and "Info" in labels:
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} MKV controls unavailable: {labels}")
+        time.sleep(0.25)
+    tv.select("Info", strict=True)
+    deadline = time.monotonic() + 30
+    while True:
+        labels = [n.get("text") for n in tv.tree().iter("node") if n.get("text")]
+        if any(text.startswith("ERROR_CODE_") for text in labels):
+            raise AssertionError(f"{label} MKV decode error: {labels}")
+        if "Video rendered" in labels and any(text.startswith("✓ audio/mp4a-latm") for text in labels):
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{label} MKV H264/AAC not ready: {labels}")
+        time.sleep(0.25)
+    tv.select("Info", strict=True)
+    tv.select("Subtitles", strict=True)
+    tv.text("Close tracks", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.text("Subtitles off", focused=True)
+    tv.key("DPAD_DOWN")
+    tv.find(lambda n: bool(n.get("text")) and n.get("text") not in ("Subtitles off", "Close tracks"),
+            "focused embedded subtitle", focused=True)
+    tv.key("DPAD_CENTER")
+    tv.text("Play", focused=True)
+    tv.select("Info", strict=True)
+    tv.key("MEDIA_PLAY")
+    tv.text("Subtitle cue active")
+    tv.key("MEDIA_PAUSE")
+    tv.screenshot(output / f"{label.replace(' ', '-')}-mkv-embedded.png")
+    tv.select("Info", strict=True)
+    tv.key("BACK")
+    tv.text("vireo-multitrack.mkv")
+    print(f"PASS {label} Matroska H264/AAC and embedded subtitle cue", flush=True)
+
+
 def local_media(tv, fixture, output):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
     tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
-    for name in ("vireo-video.mp4", "vireo-video.srt"):
+    for name in ("vireo-video.mp4", "vireo-video.srt", "vireo-multitrack.mkv"):
         tv.adb("push", str(Path(fixture).parent / name), f"/sdcard/000-Vireo-media/{name}")
     tv.launch()
     tv.select("Internal")
@@ -459,6 +499,7 @@ def local_media(tv, fixture, output):
     tv.screenshot(output / "local-media-grid.png")
     media_playback(tv, "local release", output)
     video_playback(tv, "local release", output)
+    multitrack_playback(tv, "local release", output)
 
 
 def smb(tv, fixture, variant, user, password, output):
@@ -476,6 +517,17 @@ def smb(tv, fixture, variant, user, password, output):
     tv.screenshot(output / f"{variant}-smb-grid.png")
     media_playback(tv, f"{variant} SMB", output)
     video_playback(tv, f"{variant} SMB", output)
+    multitrack_playback(tv, f"{variant} SMB", output)
+
+
+def initial_install(tv, hierarchy, release):
+    try:
+        tv.install(hierarchy)
+        tv.install(release)
+    except subprocess.TimeoutExpired as error:
+        # The device may still be committing the session. The CI launcher
+        # can retry setup on a clean guest using this dedicated exit status.
+        raise SystemExit(75) from error
 
 
 if __name__ == "__main__":
@@ -494,15 +546,19 @@ if __name__ == "__main__":
     password = os.environ["VIREO_TEST_SMB_PASSWORD"]
     args.output.mkdir(parents=True, exist_ok=True)
     try:
-        tv.install(args.hierarchy)
-        tv.install(args.release)
-    except Exception:
-        (args.output / "setup-failure.txt").write_text(traceback.format_exc())
+        tv.configure_runtime()
+        initial_install(tv, args.hierarchy, args.release)
+    except (Exception, SystemExit):
+        trace = traceback.format_exc()
+        (args.output / "setup-failure.txt").write_text(trace)
+        print(trace, file=sys.stderr, flush=True)
         for name, command in [
             ("adb-devices", ["adb", "devices", "-l"]),
             ("boot-state", ["adb", "-s", args.serial, "shell", "getprop", "sys.boot_completed"]),
             ("package-manager", ["adb", "-s", args.serial, "shell", "pm", "path", "android"]),
-            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-d", "-t", "1500"]),
+            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-b", "all", "-d"]),
+            ("disk-space", ["adb", "-s", args.serial, "shell", "df", "-h", "/data"]),
+            ("installer-state", ["adb", "-s", args.serial, "shell", "dumpsys", "package", "installs"]),
         ]:
             try:
                 result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
