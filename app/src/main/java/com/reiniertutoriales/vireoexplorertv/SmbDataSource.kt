@@ -60,8 +60,9 @@ internal class SmbShareSession(endpoint: SmbEndpoint) : Closeable {
         try {
             val smbClient = SMBClient(
                 SmbConfig.builder()
+                    // SMBJ's receive loop also waits on an idle connection.
+                    // Bound individual requests and keep the default idle socket behavior.
                     .withTimeout(10, TimeUnit.SECONDS)
-                    .withSoTimeout(10, TimeUnit.SECONDS)
                     .withSigningRequired(true)
                     .build()
             )
