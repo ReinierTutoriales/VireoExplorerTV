@@ -40,6 +40,7 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -70,19 +71,25 @@ internal fun exifTransformDegreesAndFlip(orientation: Int): Pair<Float, Boolean>
     else -> 0f to false
 }
 
-internal fun readBoundedImageBytes(input: InputStream, maxBytes: Int = MAX_IMAGE_STREAM_BYTES): ByteArray {
+internal fun readBoundedImageBytes(
+    input: InputStream,
+    maxBytes: Int = MAX_IMAGE_STREAM_BYTES,
+    checkCancellation: () -> Unit = {}
+): ByteArray {
     require(maxBytes > 0)
-    val buffer = ByteArray(64 * 1024)
+    val buffer = ByteArray(minOf(64 * 1024, maxBytes))
     val output = ByteArrayOutputStream()
-    var total = 0
     while (true) {
-        val n = input.read(buffer)
-        if (n < 0) break
-        total += n
-        check(total <= maxBytes) { "Image exceeds ${maxBytes / (1024 * 1024)} MiB memory limit" }
-        output.write(buffer, 0, n)
+        checkCancellation()
+        val remaining = maxBytes - output.size()
+        val requested = if (remaining == 0) 1 else minOf(buffer.size, remaining)
+        val read = input.read(buffer, 0, requested)
+        if (read < 0) break
+        check(read > 0) { "Image stream made no progress" }
+        check(read <= remaining) { "Image exceeds the $maxBytes-byte memory limit" }
+        output.write(buffer, 0, read)
     }
-    check(total > 0) { "Empty image stream" }
+    check(output.size() > 0) { "Empty image stream" }
     return output.toByteArray()
 }
 
@@ -145,29 +152,27 @@ private suspend fun decode(
     height: Int,
     openStream: (suspend (Entry) -> InputStream)? = null
 ): DecodedVisual = withContext(Dispatchers.IO) {
-    if (openStream != null) {
-        val bytes = openStream(entry).use { readBoundedImageBytes(it) }
-        if (Build.VERSION.SDK_INT >= 28) {
-            decodeSourceVisual(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), width, height)
-        } else {
-            DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
-        }
-    } else if (entry.uri.scheme == "file") {
-        val file = java.io.File(requireNotNull(entry.uri.path))
-        if (Build.VERSION.SDK_INT >= 28) {
-            decodeSourceVisual(ImageDecoder.createSource(file), width, height)
-        } else {
-            val bytes = java.io.FileInputStream(file).use { readBoundedImageBytes(it) }
-            DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
-        }
+    coroutineContext.ensureActive()
+    val localFile = if (openStream == null && entry.uri.scheme == "file") {
+        java.io.File(requireNotNull(entry.uri.path))
+    } else null
+    if (openStream == null && Build.VERSION.SDK_INT >= 28) {
+        val source = if (localFile != null) ImageDecoder.createSource(localFile)
+        else ImageDecoder.createSource(checkNotNull(resolver), entry.uri)
+        return@withContext decodeSourceVisual(source, width, height)
+    }
+
+    val stream = when {
+        openStream != null -> openStream(entry)
+        localFile != null -> localFile.inputStream()
+        else -> checkNotNull(checkNotNull(resolver).openInputStream(entry.uri))
+    }
+    val bytes = stream.use { readBoundedImageBytes(it) { coroutineContext.ensureActive() } }
+    coroutineContext.ensureActive()
+    if (Build.VERSION.SDK_INT >= 28) {
+        decodeSourceVisual(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), width, height)
     } else {
-        val contentResolver = checkNotNull(resolver)
-        if (Build.VERSION.SDK_INT >= 28) {
-            decodeSourceVisual(ImageDecoder.createSource(contentResolver, entry.uri), width, height)
-        } else {
-            val bytes = checkNotNull(contentResolver.openInputStream(entry.uri)).use { readBoundedImageBytes(it) }
-            DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
-        }
+        DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
     }
 }
 
