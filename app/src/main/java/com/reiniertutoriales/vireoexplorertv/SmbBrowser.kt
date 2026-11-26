@@ -321,16 +321,16 @@ internal fun SmbBrowser(onClose: () -> Unit) {
                     Entry(uri, item.name, mediaMime(item.name), item.bytes, 0) to remotePath
                 }
         }
-        val allowedImageMap = remember(imageSiblings) { imageSiblings.associate { it.first.uri to it.second } }
+        val siblings = remember(imageSiblings) { imageSiblings.map { it.first } }
         val targetUri = remoteUri(server.host, server.share, imageTarget.first)
         val targetEntry = Entry(targetUri, imageTarget.second.name, mediaMime(imageTarget.second.name), imageTarget.second.bytes, 0)
-        val imagePaths = remember(allowedImageMap, targetUri, imageTarget.first) {
-            allowedImageMap + (targetUri to imageTarget.first)
+        val imagePaths = remember(imageSiblings, targetUri, imageTarget.first) {
+            imageSiblings.associate { it.first.uri to it.second } + (targetUri to imageTarget.first)
         }
         ImageViewer(
             entry = targetEntry,
             resolver = null,
-            siblings = imageSiblings.map { it.first },
+            siblings = siblings,
             openStream = { item ->
                 // Use the same length-bounded reads as video, without SMBJ's read-ahead past EOF.
                 androidx.media3.datasource.DataSourceInputStream(
