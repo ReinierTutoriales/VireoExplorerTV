@@ -51,6 +51,7 @@ public final class Hierarchy extends Instrumentation {
     private static void append(XmlSerializer xml, AccessibilityNodeInfo node) throws Exception {
         xml.startTag(null, "node");
         xml.attribute(null, "text", clean(node.getText()));
+        xml.attribute(null, "content-desc", clean(node.getContentDescription()));
         xml.attribute(null, "class", clean(node.getClassName()));
         xml.attribute(null, "focused", Boolean.toString(node.isFocused()));
         Rect bounds = new Rect();
