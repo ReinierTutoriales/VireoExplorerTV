@@ -80,7 +80,7 @@ internal fun ExplorerHome(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(start = 88.dp, end = 40.dp, top = 24.dp, bottom = 24.dp)
+                .padding(start = 24.dp, end = 40.dp, top = 24.dp, bottom = 24.dp)
         ) {
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 16.dp),

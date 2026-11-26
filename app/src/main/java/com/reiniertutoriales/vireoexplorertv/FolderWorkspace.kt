@@ -35,7 +35,7 @@ internal fun FolderWorkspace(
     BackHandler(enabled = showDetails && enabled) { closeDetails() }
     ExplorerNavigation(page = ExplorerPage.FILES, enabled = enabled, onNavigate = onNavigate) {
         Row(
-            Modifier.fillMaxSize().padding(start = 88.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
+            Modifier.fillMaxSize().padding(start = 24.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(Modifier.weight(1f).fillMaxHeight()) { content() }

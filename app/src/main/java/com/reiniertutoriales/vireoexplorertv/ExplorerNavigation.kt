@@ -11,7 +11,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,9 +36,8 @@ internal fun ExplorerNavigation(
         focusedSelectedContainerColor = colors.inverseSurface,
         focusedSelectedContentColor = colors.inverseOnSurface
     )
-    ModalNavigationDrawer(
+    NavigationDrawer(
         drawerState = rememberDrawerState(DrawerValue.Closed),
-        scrimBrush = SolidColor(colors.background.copy(alpha = 0.64f)),
         drawerContent = { drawerValue ->
             Column(
                 modifier = Modifier.fillMaxHeight()
