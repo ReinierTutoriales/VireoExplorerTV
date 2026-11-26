@@ -635,9 +635,10 @@ if __name__ == "__main__":
     args.output.mkdir(parents=True, exist_ok=True)
     try:
         tv.configure_runtime()
+        ci_api = os.environ.get("TV_API")
         isolate_verifier = (os.environ.get("GITHUB_ACTIONS") == "true"
-                            and os.environ.get("TV_API") == "30"
-                            and tv.setup_command("shell", "getprop", "ro.build.version.sdk").strip() == "30")
+                            and ci_api in {"30", "36"}
+                            and tv.setup_command("shell", "getprop", "ro.build.version.sdk").strip() == ci_api)
         initial_install(tv, args.hierarchy, args.release, isolate_verifier=isolate_verifier)
     except (Exception, SystemExit):
         trace = traceback.format_exc()
