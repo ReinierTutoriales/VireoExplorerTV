@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -59,12 +60,18 @@ internal fun ExplorerFileItem(
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    val shape = VireoCardShape
     val restingBorder = Border.None
     val selectedRestingBorder = Border(BorderStroke(1.dp, colors.primary), shape = shape)
     val focusBorder = Border(BorderStroke(3.dp, colors.primary), shape = shape)
-    val size = if (!directory && bytes >= 0) Formatter.formatFileSize(context, bytes) else null
-    val subtitle = listOfNotNull(typeLabel.takeIf { it.isNotBlank() && !directory }, size).joinToString(" · ")
+    val size = remember(context, directory, bytes) {
+        if (!directory && bytes >= 0) Formatter.formatFileSize(context, bytes) else null
+    }
+    val subtitle = if (directory) "" else when {
+        typeLabel.isBlank() -> size.orEmpty()
+        size == null -> typeLabel
+        else -> "$typeLabel · $size"
+    }
 
     if (grid) {
         Surface(
@@ -75,7 +82,7 @@ internal fun ExplorerFileItem(
             modifier = modifier,
             shape = SelectableSurfaceDefaults.shape(shape),
             colors = SelectableSurfaceDefaults.colors(
-                containerColor = if (directory) colors.background else colors.surface,
+                containerColor = colors.surface,
                 contentColor = colors.onSurface,
                 selectedContainerColor = colors.primaryContainer,
                 selectedContentColor = colors.onPrimaryContainer,
@@ -94,12 +101,12 @@ internal fun ExplorerFileItem(
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Box(
-                    Modifier.fillMaxWidth().height(92.dp),
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f),
                     contentAlignment = Alignment.Center
                 ) {
                     if (directory) {
                         Icon(androidx.compose.ui.res.painterResource(R.drawable.symbol_folder), contentDescription = null,
-                            modifier = Modifier.size(80.dp), tint = colors.primary)
+                            modifier = Modifier.size(56.dp), tint = colors.primary)
                     } else {
                         artwork(Modifier.fillMaxSize())
                     }
@@ -189,7 +196,7 @@ internal fun ExplorerFileItem(
                 focusedBorder = focusBorder,
                 focusedSelectedBorder = focusBorder
             ),
-            scale = ListItemDefaults.scale(focusedScale = 1.05f, focusedSelectedScale = 1.05f)
+            scale = ListItemDefaults.scale(focusedScale = 1.01f, focusedSelectedScale = 1.01f)
         )
     }
 }

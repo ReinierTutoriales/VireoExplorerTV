@@ -1,12 +1,15 @@
 package com.reiniertutoriales.vireoexplorertv
 
 import android.text.format.Formatter
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -22,27 +25,17 @@ internal fun FolderWorkspace(
 ) {
     val colors = MaterialTheme.colorScheme
     var showDetails by remember { mutableStateOf(false) }
-    NavigationDrawer(
-        drawerState = rememberDrawerState(DrawerValue.Closed),
-        drawerContent = {
-            Column(
-                Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 12.dp, top = 24.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ExplorerPage.entries.forEach { page ->
-                    NavigationDrawerItem(
-                        selected = page == ExplorerPage.FILES,
-                        enabled = enabled,
-                        onClick = { onNavigate(page) },
-                        leadingContent = { ExplorerIcon(page.icon) },
-                        scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
-                    ) { Text(stringResource(page.label), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                }
-            }
-        }
-    ) {
+    val toolsFocus = remember { FocusRequester() }
+    val dismissFocus = remember { FocusRequester() }
+    var restoreToolsFocus by remember { mutableStateOf(false) }
+    fun closeDetails() {
+        restoreToolsFocus = true
+        showDetails = false
+    }
+    BackHandler(enabled = showDetails && enabled) { closeDetails() }
+    ExplorerNavigation(page = ExplorerPage.FILES, enabled = enabled, onNavigate = onNavigate) {
         Row(
-            Modifier.fillMaxSize().padding(start = 20.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
+            Modifier.fillMaxSize().padding(start = 88.dp, end = 40.dp, top = 24.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(Modifier.weight(1f).fillMaxHeight()) { content() }
@@ -52,15 +45,29 @@ internal fun FolderWorkspace(
                     shape = VireoCardShape,
                     colors = SurfaceDefaults.colors(containerColor = colors.surface, contentColor = colors.onSurface)
                 ) {
-                    Column {
-                        OutlinedButton(onClick = { showDetails = false }, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(8.dp)) {
+                        LaunchedEffect(Unit) { dismissFocus.requestFocus() }
+                        OutlinedButton(
+                            onClick = ::closeDetails,
+                            modifier = Modifier.fillMaxWidth().focusRequester(dismissFocus)
+                        ) {
                             Text(stringResource(android.R.string.cancel))
                         }
                         Box(Modifier.weight(1f)) { details() }
                     }
                 }
             } else {
-                IconButton(enabled = enabled, onClick = { showDetails = true }) {
+                LaunchedEffect(restoreToolsFocus) {
+                    if (restoreToolsFocus) {
+                        toolsFocus.requestFocus()
+                        restoreToolsFocus = false
+                    }
+                }
+                IconButton(
+                    enabled = enabled,
+                    onClick = { showDetails = true },
+                    modifier = Modifier.focusRequester(toolsFocus)
+                ) {
                     ExplorerIcon(R.drawable.symbol_description, description = stringResource(R.string.explorer_folder_tools))
                 }
             }

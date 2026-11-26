@@ -1367,6 +1367,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val entryFocus = remember { FocusRequester() }
+                var restoreFocus by remember(parent, gridView, actionsOpen) { mutableStateOf(true) }
                 val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
                 val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
                 val focusTarget = if (restoreIndex >= 0) restoreEntry else visible.firstOrNull()?.uri
@@ -1378,8 +1379,13 @@ class MainActivity : ComponentActivity() {
                 }
                 val renderEntry: @Composable (Entry) -> Unit = { entry ->
                     val restoring = entry.uri == focusTarget
-                    if (restoring) LaunchedEffect(entry.uri, model.busy, listingPending) {
-                        if (!model.busy && !listingPending && entryFocus.requestFocus()) returnEntries.remove(parent)
+                    if (restoring && restoreFocus && !actionsOpen) {
+                        LaunchedEffect(entry.uri, model.busy, listingPending) {
+                            if (!model.busy && !listingPending && entryFocus.requestFocus()) {
+                                restoreFocus = false
+                                returnEntries.remove(parent)
+                            }
+                        }
                     }
                     val action = if (model.multi) null else ({
                         if (itemReady) {

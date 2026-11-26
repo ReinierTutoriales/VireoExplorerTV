@@ -5,14 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -71,79 +69,14 @@ internal fun ExplorerHome(
     content: LazyListScope.() -> Unit
 ) {
     val initialFocus = remember { FocusRequester() }
-    val drawerHomeFocus = remember { FocusRequester() }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
     LaunchedEffect(page) { initialFocus.requestFocus() }
     val colors = MaterialTheme.colorScheme
-    val drawerItemColors = NavigationDrawerItemDefaults.colors(
-        containerColor = Color.Transparent,
-        contentColor = colors.onSurfaceVariant,
-        selectedContainerColor = colors.primaryContainer,
-        selectedContentColor = colors.onPrimaryContainer,
-        focusedContainerColor = colors.inverseSurface,
-        focusedContentColor = colors.inverseOnSurface,
-        focusedSelectedContainerColor = colors.inverseSurface,
-        focusedSelectedContentColor = colors.inverseOnSurface
-    )
 
-    NavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .background(Color.Black)
-                    .padding(start = 16.dp, top = 24.dp, bottom = 24.dp, end = 8.dp)
-                    .focusProperties {
-                        onEnter = {
-                            if (page == ExplorerPage.HOME) {
-                                drawerHomeFocus.requestFocus()
-                            } else {
-                                initialFocus.requestFocus()
-                            }
-                        }
-                    }
-                    .selectableGroup(),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                val mainDestinations = ExplorerPage.entries.dropLast(1)
-                mainDestinations.forEach { destination ->
-                    NavigationDrawerItem(
-                        selected = destination == page,
-                        onClick = { onPage(destination) },
-                        leadingContent = { ExplorerIcon(destination.icon) },
-                        modifier = when {
-                            destination == ExplorerPage.HOME -> Modifier.focusRequester(drawerHomeFocus)
-                            destination == page -> Modifier.focusRequester(initialFocus)
-                            else -> Modifier
-                        },
-                        shape = NavigationDrawerItemDefaults.shape(shape = VireoPillShape),
-                        colors = drawerItemColors,
-                        scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
-                    ) {
-                        Text(stringResource(destination.label), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                val settingsDest = ExplorerPage.SETTINGS
-                NavigationDrawerItem(
-                    selected = page == settingsDest,
-                    onClick = { onPage(settingsDest) },
-                    leadingContent = { ExplorerIcon(settingsDest.icon) },
-                    modifier = if (page == settingsDest) Modifier.focusRequester(initialFocus) else Modifier,
-                    shape = NavigationDrawerItemDefaults.shape(shape = VireoPillShape),
-                    colors = drawerItemColors,
-                    scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
-                ) {
-                    Text(stringResource(settingsDest.label), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-    ) {
+    ExplorerNavigation(page = page, onNavigate = onPage) {
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(start = 20.dp, end = 40.dp, top = 24.dp, bottom = 24.dp)
+                .padding(start = 88.dp, end = 40.dp, top = 24.dp, bottom = 24.dp)
         ) {
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 16.dp),
@@ -156,11 +89,11 @@ internal fun ExplorerHome(
                     color = colors.onSurface,
                     style = MaterialTheme.typography.headlineMedium
                 )
-                IconButton(onClick = onSearch) {
+                IconButton(
+                    onClick = onSearch,
+                    modifier = if (page == ExplorerPage.HOME) Modifier else Modifier.focusRequester(initialFocus)
+                ) {
                     ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
-                }
-                IconButton(onClick = { onPage(ExplorerPage.SETTINGS) }) {
-                    ExplorerIcon(R.drawable.symbol_settings, description = stringResource(R.string.explorer_settings))
                 }
             }
             LazyColumn(
@@ -226,7 +159,6 @@ internal fun ExplorerHome(
                         }
                     }
                 } else {
-                    item { Text(stringResource(page.label), style = MaterialTheme.typography.titleLarge) }
                     if (notice != null) item { Text(notice, color = colors.primary) }
                     content()
                 }
@@ -250,7 +182,7 @@ private fun ExplorerTile(
     onClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    val shape = VireoCardShape
     Card(
         onClick = onClick,
         modifier = modifier,

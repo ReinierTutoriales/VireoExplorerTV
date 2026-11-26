@@ -218,8 +218,10 @@ def storage_and_timing(tv, output):
 
     tv.adb("shell", "dumpsys", "gfxinfo", PACKAGE, "reset")
     tv.text("Internal", focused=True)
+    tv.screenshot(output / "home-storage.png")
     tv.key("DPAD_CENTER")
     tv.text(FIXTURE_DIR, focused=True)
+    tv.screenshot(output / "folder-grid.png")
     tv.key("DPAD_CENTER")
     tv.text(FIXTURE_FILE, focused=True)
     tv.key("DPAD_CENTER", long=True)
