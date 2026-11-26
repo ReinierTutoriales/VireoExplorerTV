@@ -1,7 +1,7 @@
 import subprocess
 import unittest
 from unittest.mock import patch
-from tv_runtime import Tv
+from tv_runtime import Tv, initial_install
 
 
 class SetupTests(unittest.TestCase):
@@ -49,3 +49,17 @@ class SetupTests(unittest.TestCase):
                 tv, "setup_command", side_effect=["", "1.0"]):
             with self.assertRaises(AssertionError):
                 tv.configure_runtime()
+
+    def test_initial_install_timeout_is_reported_for_clean_boot_retry(self):
+        tv = Tv("emulator-5554")
+        with patch.object(tv, "install", side_effect=subprocess.TimeoutExpired("adb", 90)):
+            with self.assertRaises(SystemExit) as result:
+                initial_install(tv, "hierarchy.apk", "release.apk")
+        self.assertEqual(result.exception.code, 75)
+
+    def test_initial_install_deterministic_failure_propagates(self):
+        tv = Tv("emulator-5554")
+        error = subprocess.CalledProcessError(1, "adb", output="INSTALL_FAILED_UPDATE_INCOMPATIBLE")
+        with patch.object(tv, "install", side_effect=error):
+            with self.assertRaises(subprocess.CalledProcessError):
+                initial_install(tv, "hierarchy.apk", "release.apk")

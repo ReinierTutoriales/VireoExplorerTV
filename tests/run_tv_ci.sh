@@ -23,17 +23,34 @@ df -h "$RUNNER_TEMP"
 # Start the host daemon before the guest; don't reset it during a live install.
 adb start-server
 echo no | avdmanager create avd --force --name vireo-ci --package "$image" --device tv_1080p
-emulator -avd vireo-ci -port 5554 -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -no-audio -no-boot-anim -cores 2 -memory 3072 -accel on > runtime-evidence/emulator.log 2>&1 &
-emu_pid=$!
-cleanup() {
-  status=$?
-  trap - EXIT
-  timeout 10 adb devices -l > runtime-evidence/final-adb.txt 2>&1 || true
-  timeout 15 adb -s emulator-5554 logcat -d -t 3000 > runtime-evidence/final-logcat.txt 2>&1 || true
+emu_pid=
+evidence=
+stop_emulator() {
+  if [[ -z "$emu_pid" ]]; then
+    return
+  fi
+  timeout 10 adb devices -l > "$evidence/final-adb.txt" 2>&1 || true
+  timeout 15 adb -s emulator-5554 logcat -b all -d > "$evidence/final-logcat.txt" 2>&1 || true
   timeout 10 adb -s emulator-5554 emu kill || true
   kill "$emu_pid" 2>/dev/null || true
   wait "$emu_pid" 2>/dev/null || true
-  exit "$status"
+  emu_pid=
 }
-trap cleanup EXIT
-python3 tests/tv_runtime.py --release artifacts/release/app-release.apk --debug artifacts/debug/app-debug.apk --hierarchy artifacts/hierarchy/tv-test-debug.apk --media-fixture /tmp/vireo-ci-smb/vireo-playback.wav --output runtime-evidence --smb-user "$(id -un)"
+trap stop_emulator EXIT
+
+for attempt in 1 2; do
+  evidence="runtime-evidence/attempt-$attempt"
+  mkdir -p "$evidence"
+  emulator -avd vireo-ci -port 5554 -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -wipe-data -no-audio -no-boot-anim -cores 2 -memory 3072 -accel on > "$evidence/emulator.log" 2>&1 &
+  emu_pid=$!
+  status=0
+  python3 tests/tv_runtime.py \
+    --release artifacts/release/app-release.apk --debug artifacts/debug/app-debug.apk \
+    --hierarchy artifacts/hierarchy/tv-test-debug.apk --media-fixture /tmp/vireo-ci-smb/vireo-playback.wav \
+    --output "$evidence" --smb-user "$(id -un)" || status=$?
+  if [[ "$status" -ne 75 || "$attempt" -eq 2 ]]; then
+    exit "$status"
+  fi
+  echo "Initial APK install timed out. Retrying once on a wiped CI emulator."
+  stop_emulator
+done

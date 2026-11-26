@@ -520,6 +520,16 @@ def smb(tv, fixture, variant, user, password, output):
     multitrack_playback(tv, f"{variant} SMB", output)
 
 
+def initial_install(tv, hierarchy, release):
+    try:
+        tv.install(hierarchy)
+        tv.install(release)
+    except subprocess.TimeoutExpired as error:
+        # The device may still be committing the session. The CI launcher
+        # can retry setup on a clean guest using this dedicated exit status.
+        raise SystemExit(75) from error
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", default="emulator-5554")
@@ -537,15 +547,16 @@ if __name__ == "__main__":
     args.output.mkdir(parents=True, exist_ok=True)
     try:
         tv.configure_runtime()
-        tv.install(args.hierarchy)
-        tv.install(args.release)
-    except Exception:
-        (args.output / "setup-failure.txt").write_text(traceback.format_exc())
+        initial_install(tv, args.hierarchy, args.release)
+    except (Exception, SystemExit):
+        trace = traceback.format_exc()
+        (args.output / "setup-failure.txt").write_text(trace)
+        print(trace, file=sys.stderr, flush=True)
         for name, command in [
             ("adb-devices", ["adb", "devices", "-l"]),
             ("boot-state", ["adb", "-s", args.serial, "shell", "getprop", "sys.boot_completed"]),
             ("package-manager", ["adb", "-s", args.serial, "shell", "pm", "path", "android"]),
-            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-d", "-t", "3000"]),
+            ("setup-logcat", ["adb", "-s", args.serial, "logcat", "-b", "all", "-d"]),
             ("disk-space", ["adb", "-s", args.serial, "shell", "df", "-h", "/data"]),
             ("installer-state", ["adb", "-s", args.serial, "shell", "dumpsys", "package", "installs"]),
         ]:
