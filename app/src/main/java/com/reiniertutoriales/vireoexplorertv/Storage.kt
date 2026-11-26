@@ -355,7 +355,7 @@ class Storage(private val resolver: ContentResolver) {
             } else folder.toString()
             if (!seen.add(seenKey)) continue
             if (seen.size > 2000 || files.size >= 20000) { limited = true; break }
-            val entries = try { children(folder) } catch (e: CancellationException) { throw e } catch (_: Exception) { failures++; continue }
+            val entries = try { listChildren(folder, sorted = false) } catch (e: CancellationException) { throw e } catch (_: Exception) { failures++; continue }
             if (entries.isEmpty()) folders[folder]?.let { emptyFolders.add(it) }
             for (entry in entries) {
                 coroutineContext.ensureActive()
@@ -369,7 +369,7 @@ class Storage(private val resolver: ContentResolver) {
         val buffer = ByteArray(128 * 1024)
         var sampleBudget = 64L * 1024 * 1024
         var budget = 512L * 1024 * 1024
-        for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }) {
+        for ((size, group) in files.filter { it.size > 0 }.distinctBy { it.uri }.groupBy { it.size }.toSortedMap()) {
             if (group.size < 2) continue
             val candidateGroups = if (size > 128 * 1024L) {
                 val sampleGroups = mutableMapOf<String, MutableList<Entry>>()
@@ -377,11 +377,12 @@ class Storage(private val resolver: ContentResolver) {
                 for (entry in group) {
                     coroutineContext.ensureActive()
                     if (sampleSize > sampleBudget) { limited = true; continue }
+                    sampleBudget -= sampleSize
                     try {
                         val (prefixHash, sampledBytes) = openInput(entry.uri).use { input ->
-                            sampledPrefixSha256(input, sampleSize) { coroutineContext.ensureActive() }
+                            sampledPrefixSha256(input, sampleSize, buffer) { coroutineContext.ensureActive() }
                         }
-                        sampleBudget -= sampledBytes
+                        check(sampledBytes == sampleSize) { "File changed during scan" }
                         sampleGroups.getOrPut(prefixHash) { mutableListOf() }.add(entry)
                     } catch (e: CancellationException) { throw e } catch (_: Exception) { failures++ }
                 }
@@ -720,10 +721,14 @@ internal fun bytesToHex(bytes: ByteArray): String {
     return String(out)
 }
 
-internal inline fun sampledPrefixSha256(input: InputStream, maxBytes: Int = 64 * 1024, checkCancellation: () -> Unit): Pair<String, Int> {
-    require(maxBytes > 0)
+internal inline fun sampledPrefixSha256(
+    input: InputStream,
+    maxBytes: Int = 64 * 1024,
+    buffer: ByteArray = ByteArray(16 * 1024),
+    checkCancellation: () -> Unit
+): Pair<String, Int> {
+    require(maxBytes > 0 && buffer.isNotEmpty())
     val md = MessageDigest.getInstance("SHA-256")
-    val buffer = ByteArray(minOf(maxBytes, 16 * 1024))
     var remaining = maxBytes
     var totalRead = 0
     while (remaining > 0) {

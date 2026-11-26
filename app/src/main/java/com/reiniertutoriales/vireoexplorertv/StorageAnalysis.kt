@@ -75,7 +75,11 @@ internal fun StorageAnalysis(storage: Storage, root: Uri, writable: Boolean, onC
     if (confirmBatchDelete && targets.isNotEmpty()) {
         TvConfirmDialog(
             title = "Delete selected items?",
-            message = "${targets.size} selected items will be permanently removed.",
+            message = stringResource(
+                R.string.analysis_confirm_selected,
+                targets.size,
+                Formatter.formatFileSize(context, targets.sumOf { it.size.coerceAtLeast(0L) })
+            ),
             confirmLabel = "Delete",
             onConfirm = {
                 deleting = true

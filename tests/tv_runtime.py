@@ -109,14 +109,17 @@ class Tv:
             time.sleep(0.25)
         raise AssertionError(f"No fresh instrumentation hierarchy: {last}")
 
-    def find(self, predicate, label, focused=False):
-        for _ in range(5):
+    def find(self, predicate, label, focused=False, timeout=None):
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        for _ in range(120 if deadline is not None else 5):
             tree = self.tree()
             scopes = [node for node in tree.iter("node") if node.get("focused") == "true"] if focused else [tree]
             for scope in scopes:
                 for node in scope.iter("node"):
                     if predicate(node):
                         return node
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             time.sleep(0.25)
         labels = [node.get("text") for node in tree.iter("node") if node.get("text")]
         raise AssertionError(f"Missing {label!r}, focused={focused}. Screen: {labels}")
@@ -336,6 +339,34 @@ def storage_mutations(tv, output):
     print("PASS release rename, copy, ZIP creation/extraction, delete/cancel and move", flush=True)
 
 
+def cleanup_review(tv):
+    tv.storage_access(True)
+    candidate = "/sdcard/000-vireo-review.tmp"
+    protected = "/sdcard/000-vireo-keep.txt"
+    tv.adb("shell", f"printf disposable > {candidate}; printf keep > {protected}")
+    tv.launch()
+    tv.text("Internal", focused=True)
+    tv.key("DPAD_LEFT")
+    tv.select("Cleaner", strict=True)
+    tv.text("Applications")
+    tv.select("Cleanup")
+    tv.select("Scan storage & clean files")
+    tv.select(Path(candidate).name)
+    tv.select("Delete selected (1)")
+    tv.text("Delete selected items?")
+    tv.select("Cancel")
+    if tv.adb("shell", "cat", candidate).strip() != "disposable":
+        raise AssertionError("Cancel changed the cleanup candidate")
+    tv.select("Delete selected (1)")
+    tv.select("Delete")
+    tv.find(lambda node: (node.get("text") or "").startswith("Freed:"), "cleanup result")
+    if Path(candidate).name in tv.adb("shell", "ls", "-1a", "/sdcard").splitlines():
+        raise AssertionError("Confirmed cleanup did not remove the selected file")
+    if tv.adb("shell", "cat", protected).strip() != "keep":
+        raise AssertionError("Cleanup modified an unselected file")
+    print("PASS cleanup review, cancellation and confirmed deletion", flush=True)
+
+
 def search_pagination(tv, output):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", f"/sdcard/{FIXTURE_DIR}")
@@ -493,11 +524,26 @@ def multitrack_playback(tv, label, output):
     print(f"PASS {label} Matroska H264/AAC and embedded subtitle cue", flush=True)
 
 
+def image_viewing(tv, label, output):
+    name = "vireo-image.png"
+    tv.select(name)
+    started = time.monotonic()
+    tv.find(lambda node: node.get("content-desc") == name, "decoded image", timeout=30)
+    print(f"{label} image observed after {time.monotonic() - started:.2f}s including automation", flush=True)
+    tv.select("Zoom +")
+    tv.text("Pan")
+    tv.select("Rotate")
+    tv.screenshot(output / f"{label.replace(' ', '-')}-image.png")
+    tv.select("Back")
+    tv.text(name)
+    print(f"PASS {label} image decode, zoom and return", flush=True)
+
+
 def local_media(tv, fixture, output):
     tv.storage_access(True)
     tv.adb("shell", "mkdir", "-p", "/sdcard/000-Vireo-media")
     tv.adb("push", fixture, "/sdcard/000-Vireo-media/vireo-playback.wav")
-    for name in ("vireo-video.mp4", "vireo-video.srt", "vireo-multitrack.mkv"):
+    for name in ("vireo-video.mp4", "vireo-video.srt", "vireo-multitrack.mkv", "vireo-image.png"):
         tv.adb("push", str(Path(fixture).parent / name), f"/sdcard/000-Vireo-media/{name}")
     tv.launch()
     tv.select("Internal")
@@ -507,6 +553,7 @@ def local_media(tv, fixture, output):
     media_playback(tv, "local release", output)
     video_playback(tv, "local release", output)
     multitrack_playback(tv, "local release", output)
+    image_viewing(tv, "local release", output)
 
 
 def smb(tv, fixture, variant, user, password, output):
@@ -525,6 +572,7 @@ def smb(tv, fixture, variant, user, password, output):
     media_playback(tv, f"{variant} SMB", output)
     video_playback(tv, f"{variant} SMB", output)
     multitrack_playback(tv, f"{variant} SMB", output)
+    image_viewing(tv, f"{variant} SMB", output)
 
 
 def initial_install(tv, hierarchy, release):
@@ -579,6 +627,7 @@ if __name__ == "__main__":
         ("picker", lambda: picker_cancellation(tv)),
         ("storage", lambda: storage_and_timing(tv, args.output)),
         ("search", lambda: search_pagination(tv, args.output)),
+        ("cleanup review", lambda: cleanup_review(tv)),
         ("storage mutations", lambda: storage_mutations(tv, args.output)),
         ("local media", lambda: local_media(tv, args.media_fixture, args.output)),
         ("release SMB", lambda: smb(tv, args.release, "release", args.smb_user, password, args.output)),
