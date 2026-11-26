@@ -10,38 +10,31 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: '25'
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
-          gradle-version: '9.9.1'
+          gradle-version: '9.9.2'
       - name: Install Android SDK platform
         run: |
-          sdkmanager_path="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [[ ! -x "$sdkmanager_path" ]]; then
-            sdkmanager_path="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
-          fi
-          test -x "$sdkmanager_path"
-          "$sdkmanager_path" "platforms;android-37.2"
+          source scripts/android-sdk-tools.sh
+          sdkmanager --install --channel=0 "platforms;android-37.2"
       - name: Verify required TV SDK images before compilation
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager_path="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [[ ! -x "$sdkmanager_path" ]]; then
-            sdkmanager_path="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
-          fi
-          test -x "$sdkmanager_path"
-          "$sdkmanager_path" --list --channel=0 > "$RUNNER_TEMP/vireo-sdk-packages.txt"
+          source scripts/android-sdk-tools.sh
+          sdkmanager --list --channel=0 > "$RUNNER_TEMP/vireo-sdk-packages.txt"
           python3 - "$RUNNER_TEMP/vireo-sdk-packages.txt" <<'PY'
           import sys
           from pathlib import Path
           packages = {line.split("|", 1)[0].strip()
                       for line in Path(sys.argv[1]).read_text().splitlines() if "|" in line}
           required = {
+              "system-images;android-24;android-tv;x86",
               "system-images;android-28;android-tv;x86",
               "system-images;android-30;android-tv;x86",
               "system-images;android-36;android-tv;x86_64",
@@ -53,7 +46,7 @@ jobs:
           PY
       - name: Check runtime harness and setup regressions
         run: |
-          bash -n tests/run_tv_ci.sh
+          bash -n scripts/android-sdk-tools.sh && bash -n tests/run_tv_ci.sh
           python3 -m py_compile tests/tv_runtime.py tests/test_tv_runtime.py
           python3 -m unittest discover -s tests -p test_tv_runtime.py
       - run: gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :tv-test:assembleDebug --stacktrace
@@ -64,23 +57,23 @@ jobs:
             gradle :app:dependencies --configuration "$configuration" --console=plain > "dependency-evidence/$configuration.txt"
           done
           gradle :app:dependencyInsight --configuration releaseRuntimeClasspath --dependency androidx.compose --console=plain > dependency-evidence/compose-insight.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: VireoExplorerTV-dependencies
           path: dependency-evidence
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: VireoExplorerTV-minified-test
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: VireoExplorerTV-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: VireoExplorerTV-hierarchy-test
           path: tv-test/build/outputs/apk/debug/tv-test-debug.apk
@@ -94,6 +87,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - api: 24
+            arch: x86
           - api: 28
             arch: x86
           - api: 30
@@ -103,16 +98,16 @@ jobs:
     env:
       VIREO_TEST_SMB_PASSWORD: VireoCIOnly42
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: VireoExplorerTV-minified-test
           path: artifacts/release
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: VireoExplorerTV-debug
           path: artifacts/debug
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: VireoExplorerTV-hierarchy-test
           path: artifacts/hierarchy
@@ -161,7 +156,7 @@ jobs:
           TV_API: ${{ matrix.api }}
           TV_ARCH: ${{ matrix.arch }}
         run: bash tests/run_tv_ci.sh
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: VireoExplorerTV-runtime-evidence-api-${{ matrix.api }}

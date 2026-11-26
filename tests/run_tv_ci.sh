@@ -3,8 +3,7 @@
 set -euo pipefail
 mkdir -p runtime-evidence
 exec > >(tee runtime-evidence/host-setup.log) 2>&1
-sdk="${ANDROID_HOME:?Android SDK required}"
-export PATH="$sdk/platform-tools:$sdk/emulator:$sdk/cmdline-tools/latest/bin:$PATH"
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/android-sdk-tools.sh"
 export ANDROID_AVD_HOME="$RUNNER_TEMP/vireo-avd"
 mkdir -p "$ANDROID_AVD_HOME"
 image="system-images;android-${TV_API};android-tv;${TV_ARCH}"
@@ -14,7 +13,7 @@ set +o pipefail
 yes | sdkmanager --licenses
 set -o pipefail
 sdkmanager --install --channel=0 platform-tools emulator "$image"
-test -f "$sdk/system-images/android-${TV_API}/android-tv/${TV_ARCH}/package.xml"
+test -f "$ANDROID_HOME/system-images/android-${TV_API}/android-tv/${TV_ARCH}/package.xml"
 adb version
 emulator -version
 emulator -accel-check

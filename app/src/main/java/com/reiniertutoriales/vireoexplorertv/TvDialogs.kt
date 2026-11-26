@@ -13,6 +13,8 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -40,6 +42,7 @@ internal fun TvTextField(
     var isFocused by remember { mutableStateOf(false) }
     val fieldModifier = Modifier
         .fillMaxWidth()
+        .semantics { contentDescription = label }
         .then(if (inputFocusRequester != null) Modifier.focusRequester(inputFocusRequester) else Modifier)
         .then(
             if (downFocusRequester != null) Modifier.onPreviewKeyEvent { event ->
@@ -68,9 +71,6 @@ internal fun TvTextField(
                 )
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            if (state.text.isEmpty()) {
-                Text(label, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant.copy(alpha = 0.6f))
-            }
             val actionHandler = if (onDone != null) KeyboardActionHandler { onDone() } else null
             if (password) {
                 BasicSecureTextField(

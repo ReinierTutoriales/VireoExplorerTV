@@ -218,8 +218,10 @@ def storage_and_timing(tv, output):
 
     tv.adb("shell", "dumpsys", "gfxinfo", PACKAGE, "reset")
     tv.text("Internal", focused=True)
+    tv.screenshot(output / "home-storage.png")
     tv.key("DPAD_CENTER")
     tv.text(FIXTURE_DIR, focused=True)
+    tv.screenshot(output / "folder-grid.png")
     tv.key("DPAD_CENTER")
     tv.text(FIXTURE_FILE, focused=True)
     tv.key("DPAD_CENTER", long=True)
@@ -254,7 +256,12 @@ def storage_mutations(tv, output):
             raise AssertionError(f"Unexpected content in {path}: {actual!r}")
 
     def check_absent(path):
-        tv.adb("shell", "test", "!", "-e", path)
+        parent, name = path.rsplit("/", 1)
+        # List the parent so a shell predicate failure cannot stand in for a
+        # successful check, and a missing/unreadable directory fails the test.
+        entries = tv.adb("shell", "ls", "-1a", parent).splitlines()
+        if name in entries:
+            raise AssertionError(f"Expected {path} to be absent; directory contains {entries!r}")
 
     def action(item, label):
         tv.select(item, long=True)

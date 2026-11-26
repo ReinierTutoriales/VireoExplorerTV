@@ -279,6 +279,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        var lastDrawerFolder by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
         val parent = model.path.lastOrNull()?.first
         LaunchedEffect(parent) { if (parent != null) updateSettings { preferences.recordFolder(parent.toString()) } }
 
@@ -457,6 +458,20 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        fun navigateFromDrawer(destination: ExplorerPage) {
+            if (model.mutating || openingExternalFile) return
+            if (destination == ExplorerPage.FILES && parent != null) return
+            navigate(destination)
+            when (destination) {
+                ExplorerPage.NETWORK, ExplorerPage.CLEANER -> Unit
+                ExplorerPage.FILES -> model.path = lastDrawerFolder
+                else -> if (parent != null) {
+                    lastDrawerFolder = model.path
+                    model.path = emptyList()
+                }
+            }
+        }
+
         if (showHomeSearchDialog) {
             TvInputDialog(
                 title = stringResource(R.string.explorer_search),
@@ -539,7 +554,7 @@ class MainActivity : ComponentActivity() {
                     openingExternalFile -> stringResource(R.string.explorer_exporting)
                     else -> model.error ?: folderPickerNotice
                 },
-                onPage = ::navigate,
+                onPage = ::navigateFromDrawer,
                 onSearch = { showHomeSearchDialog = true },
                 onInternal = { openInternalStorageDirectly() },
                 onUsb = {
@@ -559,6 +574,10 @@ class MainActivity : ComponentActivity() {
                 onCategory = { selectedCategory ->
                     navigate(ExplorerPage.FILES)
                     category = selectedCategory
+                },
+                searchPage = search?.pageNumber,
+                searchHeader = search?.let { searchState ->
+                    { ExplorerSearchHeader(searchState, enabled = !openingExternalFile) }
                 }
             ) {
                 when (page) {
@@ -1081,22 +1100,23 @@ class MainActivity : ComponentActivity() {
         val isFavorite = parent.toString() in settings.favorites
         var focusedUri by remember(parent) { mutableStateOf<Uri?>(null) }
         var showFolderTools by remember(parent) { mutableStateOf(false) }
-        val focusedEntry = visible.firstOrNull { it.uri == focusedUri } ?: visible.firstOrNull()
         val detailsReady = !model.mutating && !model.busy && !listingPending && !model.multi && !openingExternalFile
-        val moveSupported = focusedEntry?.let {
-            writable && it.flags and (if (it.directory) DocumentsContract.Document.FLAG_SUPPORTS_MOVE
-                else DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0
-        } == true
         FolderWorkspace(
             enabled = !model.mutating,
             onNavigate = { destination ->
-                model.selected = null
-                model.multi = false
-                model.marked = emptySet()
-                model.path = emptyList()
-                navigate(destination)
+                if (destination != ExplorerPage.FILES && !model.mutating && !openingExternalFile) {
+                    model.selected = null
+                    model.multi = false
+                    model.marked = emptySet()
+                    navigateFromDrawer(destination)
+                }
             },
             details = {
+                val focusedEntry = visible.firstOrNull { it.uri == focusedUri } ?: visible.firstOrNull()
+                val moveSupported = focusedEntry?.let {
+                    writable && it.flags and (if (it.directory) DocumentsContract.Document.FLAG_SUPPORTS_MOVE
+                    else DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0
+                } == true
                 FolderDetails(
                     entry = focusedEntry,
                     revision = model.revision,
@@ -1367,6 +1387,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val entryFocus = remember { FocusRequester() }
+                var restoreFocus by remember(parent, gridView, actionsOpen) { mutableStateOf(true) }
                 val restoreEntry = remember(parent, gridView) { returnEntries[parent] }
                 val restoreIndex = if (restoreEntry == null) -1 else visible.indexOfFirst { it.uri == restoreEntry }
                 val focusTarget = if (restoreIndex >= 0) restoreEntry else visible.firstOrNull()?.uri
@@ -1378,8 +1399,13 @@ class MainActivity : ComponentActivity() {
                 }
                 val renderEntry: @Composable (Entry) -> Unit = { entry ->
                     val restoring = entry.uri == focusTarget
-                    if (restoring) LaunchedEffect(entry.uri, model.busy, listingPending) {
-                        if (!model.busy && !listingPending && entryFocus.requestFocus()) returnEntries.remove(parent)
+                    if (restoring && restoreFocus && !actionsOpen) {
+                        LaunchedEffect(entry.uri, model.busy, listingPending) {
+                            if (!model.busy && !listingPending && entryFocus.requestFocus()) {
+                                restoreFocus = false
+                                returnEntries.remove(parent)
+                            }
+                        }
                     }
                     val action = if (model.multi) null else ({
                         if (itemReady) {

@@ -343,7 +343,7 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
             }
             Row(Modifier.align(Alignment.Center).fillMaxWidth().padding(start = 48.dp, end = 48.dp, bottom = 140.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                Box(Modifier.weight(1f).aspectRatio(1f).background(Color(0xFF121212)), contentAlignment = Alignment.Center) {
+                Box(Modifier.weight(1f).aspectRatio(1f).background(MaterialTheme.colorScheme.surface, VireoCardShape), contentAlignment = Alignment.Center) {
                     val bitmap = cover
                     if (bitmap != null) Image(bitmap.asImageBitmap(), contentDescription = "Album artwork", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
                     else androidx.tv.material3.Icon(androidx.compose.ui.res.painterResource(R.drawable.symbol_music_note), null,
@@ -358,7 +358,10 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
         }
         if (!controlsVisible) Box(Modifier.fillMaxSize().focusRequester(surfaceFocus).focusable())
         if (controlsVisible || buffering || error != null) Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.88f)).padding(horizontal = 40.dp, vertical = 20.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .padding(horizontal = 32.dp, vertical = 16.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), VireoCardShape)
+                .padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
         if (video) Text(metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: entry.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
