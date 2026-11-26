@@ -68,6 +68,8 @@ internal fun ExplorerHome(
     onUsb: () -> Unit,
     onFolders: () -> Unit,
     onCategory: (FileCategory) -> Unit,
+    searchPage: Int? = null,
+    searchHeader: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit
 ) {
     val initialFocus = remember { FocusRequester() }
@@ -102,7 +104,8 @@ internal fun ExplorerHome(
                     }
                 }
             }
-            key(page) {
+            searchHeader?.invoke()
+            key(page, searchPage) {
                 LazyColumn(
                     Modifier.weight(1f),
                     state = rememberLazyListState(),

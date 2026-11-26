@@ -100,6 +100,39 @@ internal fun rememberExplorerSearch(
 private fun searchRoot(uri: Uri, label: String) =
     Entry(uri, label, DocumentsContract.Document.MIME_TYPE_DIR, -1L, 0)
 
+@Composable
+internal fun ExplorerSearchHeader(search: ExplorerSearchState, enabled: Boolean) {
+    val page = search.page
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (search.locations.isNotEmpty()) {
+            Text(
+                stringResource(R.string.explorer_search_locations, search.locations.joinToString(", ")),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        when {
+            search.failed -> Text(stringResource(R.string.explorer_search_unavailable))
+            search.loading -> Text(stringResource(R.string.explorer_reading_storage))
+            page != null -> Text(stringResource(R.string.explorer_search_page, search.pageNumber, page.hits.size))
+            else -> Text(stringResource(R.string.explorer_search_choose_folder))
+        }
+        if (page?.limited == true) {
+            Text(stringResource(R.string.explorer_search_limited), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (page != null && page.unreadableFolders > 0) {
+            Text(
+                pluralStringResource(R.plurals.explorer_search_unreadable, page.unreadableFolders, page.unreadableFolders),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (page?.hasMore == true && !search.failed) {
+            Button(onClick = { if (!search.loading && enabled) search.nextPage() }) {
+                Text(stringResource(R.string.explorer_search_next))
+            }
+        }
+    }
+}
+
 internal fun LazyListScope.explorerSearchResults(
     search: ExplorerSearchState,
     searchingByName: Boolean,
@@ -109,38 +142,6 @@ internal fun LazyListScope.explorerSearchResults(
     onShowFolder: (SearchHit<Entry>) -> Unit
 ) {
     val page = search.page
-    item(key = "search-status") {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (search.locations.isNotEmpty()) {
-                Text(
-                    stringResource(R.string.explorer_search_locations, search.locations.joinToString(", ")),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            when {
-                search.failed -> Text(stringResource(R.string.explorer_search_unavailable))
-                search.loading -> Text(stringResource(R.string.explorer_reading_storage))
-                page != null -> Text(stringResource(R.string.explorer_search_page, search.pageNumber, page.hits.size))
-                else -> Text(stringResource(R.string.explorer_search_choose_folder))
-            }
-            if (page?.limited == true) {
-                Text(stringResource(R.string.explorer_search_limited), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (page != null && page.unreadableFolders > 0) {
-                Text(
-                    pluralStringResource(R.plurals.explorer_search_unreadable, page.unreadableFolders, page.unreadableFolders),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-    if (page?.hasMore == true && !search.failed) {
-        item(key = "search-next") {
-            Button(onClick = { if (!search.loading && enabled) search.nextPage() }) {
-                Text(stringResource(R.string.explorer_search_next))
-            }
-        }
-    }
     if (page != null && !page.hasMore && search.pageNumber == 1 && page.hits.isEmpty() &&
         page.unreadableFolders == 0 && !page.limited
     ) {

@@ -574,6 +574,10 @@ class MainActivity : ComponentActivity() {
                 onCategory = { selectedCategory ->
                     navigate(ExplorerPage.FILES)
                     category = selectedCategory
+                },
+                searchPage = search?.pageNumber,
+                searchHeader = search?.let { searchState ->
+                    { ExplorerSearchHeader(searchState, enabled = !openingExternalFile) }
                 }
             ) {
                 when (page) {
