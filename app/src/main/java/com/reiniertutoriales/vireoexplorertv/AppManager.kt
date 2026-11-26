@@ -34,7 +34,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.Date
 import java.util.Locale
 
@@ -43,91 +42,6 @@ private data class AppSize(val app: Long, val data: Long, val cache: Long) {
 }
 
 private data class InstalledApp(val name: String, val pkg: String, val system: Boolean)
-
-private data class QuickTempScan(
-    val tempFiles: List<File>,
-    val emptyDirs: List<File>,
-    val tempBytes: Long
-) {
-    val totalCount: Int get() = tempFiles.size + emptyDirs.size
-}
-
-private fun isQuickTempFileName(name: String): Boolean {
-    val lower = name.lowercase(Locale.ROOT)
-    if (lower.startsWith(".trashed-") || lower.startsWith("~$") || lower == "thumbs.db" || lower == ".ds_store") {
-        return true
-    }
-    return when (lower.substringAfterLast('.', "")) {
-        "tmp", "temp", "cache", "bak", "old", "orig", "log", "dmp", "crash", "part", "partial", "crdownload", "download" -> true
-        else -> false
-    }
-}
-
-private fun scanQuickTemporaryFiles(rootDir: File?): QuickTempScan {
-    if (rootDir == null || !rootDir.exists() || !rootDir.canRead()) {
-        return QuickTempScan(emptyList(), emptyList(), 0L)
-    }
-    val tempFiles = ArrayList<File>()
-    val emptyDirs = ArrayList<File>()
-    var bytes = 0L
-    val queue = ArrayDeque<Pair<File, Int>>()
-    queue.add(rootDir to 0)
-    var visitedDirs = 0
-    while (queue.isNotEmpty() && visitedDirs < 1000) {
-        visitedDirs++
-        val (dir, depth) = queue.removeFirst()
-        val children = dir.listFiles() ?: continue
-        if (children.isEmpty() && depth > 0 && dir.canWrite()) {
-            emptyDirs.add(dir)
-            continue
-        }
-        for (child in children) {
-            if (child.isDirectory) {
-                if (depth == 0 && child.name.equals("Android", ignoreCase = true)) continue
-                if (depth < 10 && queue.size < 1000) queue.add(child to depth + 1)
-            } else if (isQuickTempFileName(child.name)) {
-                tempFiles.add(child)
-                bytes += child.length().coerceAtLeast(0L)
-            }
-        }
-    }
-    return QuickTempScan(tempFiles, emptyDirs, bytes)
-}
-
-private fun computeDirectoryBytes(dir: File?): Long {
-    if (dir == null || !dir.exists()) return 0L
-    var sum = 0L
-    val stack = ArrayDeque<File>()
-    stack.add(dir)
-    var visited = 0
-    while (stack.isNotEmpty() && visited < 2000) {
-        visited++
-        val current = stack.removeFirst()
-        val children = current.listFiles() ?: continue
-        for (child in children) {
-            if (child.isDirectory) stack.add(child)
-            else sum += child.length().coerceAtLeast(0L)
-        }
-    }
-    return sum
-}
-
-private fun clearDirectoryContents(dir: File?): Pair<Int, Long> {
-    if (dir == null || !dir.exists()) return 0 to 0L
-    var count = 0
-    var freed = 0L
-    val children = dir.listFiles() ?: return 0 to 0L
-    for (child in children) {
-        if (child.name.startsWith("datastore") || child.name.endsWith(".preferences_pb")) continue
-        val size = if (child.isDirectory) computeDirectoryBytes(child) else child.length().coerceAtLeast(0L)
-        val removed = if (child.isDirectory) child.deleteRecursively() else child.delete()
-        if (removed) {
-            count++
-            freed += size
-        }
-    }
-    return count to freed
-}
 
 @Composable
 internal fun AppManager(
@@ -139,10 +53,7 @@ internal fun AppManager(
     val colors = MaterialTheme.colorScheme
     var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
-    var statusNotice by remember { mutableStateOf<String?>(null) }
     var capacity by remember { mutableStateOf<Pair<Long, Long>?>(null) }
-    var ownCacheBytes by remember { mutableLongStateOf(0L) }
-    var quickTempScan by remember { mutableStateOf<QuickTempScan?>(null) }
     var applicationsPage by rememberSaveable { mutableStateOf(true) }
     var chosenApp by remember { mutableStateOf<InstalledApp?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -178,6 +89,8 @@ internal fun AppManager(
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         statsJob?.cancel()
+        sizes = emptyMap()
+        lastUsed = emptyMap()
         measuring = false
         revision++
     }
@@ -203,21 +116,12 @@ internal fun AppManager(
 
     LaunchedEffect(revision, directGranted, applicationsPage) {
         if (applicationsPage) return@LaunchedEffect
-        quickTempScan = null
         try {
-            val (cap, cacheBytes, tempReport) = withContext(Dispatchers.IO) {
-                val stat = try {
-                    val targetPath = primaryDirectStorageDir()?.absolutePath ?: context.filesDir.absolutePath
-                    val fs = StatFs(targetPath)
-                    fs.totalBytes to fs.availableBytes
-                } catch (_: IllegalArgumentException) { null }
-                val ownCache = computeDirectoryBytes(context.cacheDir) + computeDirectoryBytes(context.externalCacheDir)
-                val quickScan = if (directGranted) scanQuickTemporaryFiles(primaryDirectStorageDir()) else null
-                Triple(stat, ownCache, quickScan)
+            capacity = withContext(Dispatchers.IO) {
+                val targetPath = directInternalDir?.absolutePath ?: context.filesDir.absolutePath
+                val fs = StatFs(targetPath)
+                fs.totalBytes to fs.availableBytes
             }
-            capacity = cap
-            ownCacheBytes = cacheBytes
-            quickTempScan = tempReport
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -284,7 +188,6 @@ internal fun AppManager(
         }
 
         error?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodyMedium) }
-        statusNotice?.let { Text(it, color = colors.primary, style = MaterialTheme.typography.bodyMedium) }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ExplorerOption(selected = applicationsPage, onClick = { applicationsPage = true },
@@ -373,140 +276,50 @@ internal fun AppManager(
                     }
 
                     item {
-                        val tempSummaryText = when {
-                            !directGranted -> stringResource(R.string.explorer_grant_storage_subtitle)
-                            quickTempScan == null -> stringResource(R.string.cleaner_quick_temp_scanning)
-                            else -> stringResource(
-                                R.string.cleaner_quick_temp_ready,
-                                quickTempScan!!.totalCount,
-                                Formatter.formatFileSize(context, quickTempScan!!.tempBytes),
-                                Formatter.formatFileSize(context, ownCacheBytes)
-                            )
-                        }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            Card(
-                                onClick = {
-                                    if (!directGranted) {
-                                        onRequestStorageAccess()
-                                    } else {
-                                        scope.launch {
-                                            trimThumbnailCache(android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)
-                                            val (deletedCount, freedBytes) = withContext(Dispatchers.IO) {
-                                                var count = 0
-                                                var freed = 0L
-                                                val (c1, b1) = clearDirectoryContents(context.cacheDir)
-                                                val (c2, b2) = clearDirectoryContents(context.externalCacheDir)
-                                                count += c1 + c2
-                                                freed += b1 + b2
-                                                val currentScan = scanQuickTemporaryFiles(primaryDirectStorageDir())
-                                                for (file in currentScan.tempFiles) {
-                                                    val sz = file.length().coerceAtLeast(0L)
-                                                    if (file.delete()) {
-                                                        count++
-                                                        freed += sz
-                                                    }
-                                                }
-                                                for (dir in currentScan.emptyDirs) {
-                                                    if (dir.listFiles()?.isEmpty() == true && dir.delete()) {
-                                                        count++
-                                                    }
-                                                }
-                                                count to freed
-                                            }
-                                            statusNotice = "$deletedCount items cleaned (${Formatter.formatFileSize(context, freedBytes)})"
-                                            revision++
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).focusRequester(primaryFocus),
-                                shape = CardDefaults.shape(VireoCardShape),
-                                colors = CardDefaults.colors(
-                                    containerColor = colors.surface,
-                                    contentColor = colors.onSurface,
-                                    focusedContainerColor = colors.primaryContainer,
-                                    focusedContentColor = colors.onPrimaryContainer
-                                ),
-                                border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
-                                scale = CardDefaults.scale(focusedScale = 1.02f)
-                            ) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(18.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        ExplorerIcon(R.drawable.symbol_cleaning_services)
-                                    }
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(
-                                            if (directGranted) stringResource(R.string.cleaner_quick_temp_title)
-                                            else stringResource(R.string.explorer_grant_storage_title),
-                                            style = MaterialTheme.typography.titleMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            tempSummaryText,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = colors.onSurfaceVariant,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                        Card(
+                            onClick = {
+                                if (directInternalUri != null) {
+                                    onAnalyze(directInternalUri)
+                                } else {
+                                    onRequestStorageAccess()
                                 }
-                            }
-
-                            Card(
-                                onClick = {
-                                    if (directInternalUri != null) {
-                                        onAnalyze(directInternalUri)
-                                    } else {
-                                        onRequestStorageAccess()
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = CardDefaults.shape(VireoCardShape),
-                                colors = CardDefaults.colors(
-                                    containerColor = colors.surface,
-                                    contentColor = colors.onSurface,
-                                    focusedContainerColor = colors.primaryContainer,
-                                    focusedContentColor = colors.onPrimaryContainer
-                                ),
-                                border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
-                                scale = CardDefaults.scale(focusedScale = 1.02f)
+                            },
+                            modifier = Modifier.fillMaxWidth().focusRequester(primaryFocus),
+                            shape = CardDefaults.shape(VireoCardShape),
+                            colors = CardDefaults.colors(
+                                containerColor = colors.surface,
+                                contentColor = colors.onSurface,
+                                focusedContainerColor = colors.primaryContainer,
+                                focusedContentColor = colors.onPrimaryContainer
+                            ),
+                            border = CardDefaults.border(border = restingBorder, focusedBorder = focusBorder),
+                            scale = CardDefaults.scale(focusedScale = 1.02f)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(18.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(18.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Box(
+                                    Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Box(
-                                        Modifier.size(48.dp).background(colors.surfaceVariant, VireoPillShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        ExplorerIcon(R.drawable.symbol_hard_drive)
-                                    }
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(
-                                            stringResource(R.string.cleaner_scan_internal),
-                                            style = MaterialTheme.typography.titleMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            stringResource(R.string.cleaner_scan_internal_subtitle),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = colors.onSurfaceVariant,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                    ExplorerIcon(R.drawable.symbol_hard_drive)
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        stringResource(R.string.cleaner_scan_internal),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        stringResource(R.string.cleaner_scan_internal_subtitle),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colors.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }

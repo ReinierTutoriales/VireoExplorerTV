@@ -303,7 +303,7 @@ internal fun ImageViewer(
                 }
                 when (decoded) {
                     is DecodedVisual.Static -> Image(
-                        decoded.bitmap.asImageBitmap(),
+                        remember(decoded.bitmap) { decoded.bitmap.asImageBitmap() },
                         current.name,
                         transformModifier,
                         contentScale = ContentScale.Fit

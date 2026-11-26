@@ -113,14 +113,13 @@ internal fun MediaViewer(entry: Entry, sourceFactory: androidx.media3.datasource
     val aspectLabels = listOf("Fit", "Zoom", "Stretch")
     LaunchedEffect(player, speedIndex) { player?.setPlaybackSpeed(speeds[speedIndex]) }
     var controlsVisible by remember(entry.uri) { mutableStateOf(true) }
-    LaunchedEffect(player, controlsVisible) {
+    LaunchedEffect(player, controlsVisible, playing) {
         val active = player ?: return@LaunchedEffect
         if (!controlsVisible) return@LaunchedEffect
         while (true) {
             positionMs = active.currentPosition.coerceAtLeast(0L)
-            durationMs = active.duration
-            seekable = active.isCurrentMediaItemSeekable
-            delay(if (active.isPlaying) 500L else 1000L)
+            if (!playing) break
+            delay(500L)
         }
     }
     var tracks by remember(entry.uri) { mutableStateOf(Tracks.EMPTY) }

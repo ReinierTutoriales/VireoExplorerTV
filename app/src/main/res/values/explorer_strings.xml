@@ -63,9 +63,6 @@
     <string name="cleaner_storage_summary">%1$s used of %2$s · %3$s free</string>
     <string name="cleaner_scan_internal">Scan storage &amp; clean files</string>
     <string name="cleaner_scan_internal_subtitle">Review temp files, residual APKs, duplicates &amp; empty folders</string>
-    <string name="cleaner_quick_temp_title">Clean temporary files</string>
-    <string name="cleaner_quick_temp_scanning">Scanning temporary files &amp; cache…</string>
-    <string name="cleaner_quick_temp_ready">%1$d temp files &amp; empty folders (%2$s) + %3$s app cache</string>
     <string name="cleaner_system_storage">System storage</string>
     <string name="cleaner_manage_apps">System app settings</string>
     <string name="cleaner_show_system">System apps</string>
@@ -83,6 +80,7 @@
     <string name="analysis_scanning">Scanning storage…</string>
     <string name="analysis_summary">%1$d files scanned · %2$s total</string>
     <string name="analysis_delete_selected">Delete selected (%1$d)</string>
+    <string name="analysis_confirm_selected">%1$d selected items will be permanently removed (%2$s).</string>
     <string name="analysis_select_all">Select all (%1$d)</string>
     <string name="analysis_clear_all">Clear selection</string>
     <string name="analysis_empty_folder">Empty folder</string>

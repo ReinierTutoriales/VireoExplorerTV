@@ -63,9 +63,6 @@
     <string name="cleaner_storage_summary">%1$s usados de %2$s · %3$s libres</string>
     <string name="cleaner_scan_internal">Analizador detallado y duplicados</string>
     <string name="cleaner_scan_internal_subtitle">Revisar archivos pesados, APKs instaladores y copias duplicadas</string>
-    <string name="cleaner_quick_temp_title">Limpieza rápida de temporales y caché</string>
-    <string name="cleaner_quick_temp_scanning">Buscando archivos temporales, residuos y caché…</string>
-    <string name="cleaner_quick_temp_ready">%1$d temporales/carpetas vacías (%2$s) + %3$s de caché</string>
     <string name="cleaner_system_storage">Ajustes de espacio</string>
     <string name="cleaner_manage_apps">Ajustes de apps</string>
     <string name="cleaner_show_system">Apps del sistema</string>
@@ -83,6 +80,7 @@
     <string name="analysis_scanning">Analizando archivos del almacenamiento…</string>
     <string name="analysis_summary">%1$d archivos analizados · %2$s en total</string>
     <string name="analysis_delete_selected">Eliminar seleccionados (%1$d)</string>
+    <string name="analysis_confirm_selected">Se eliminarán permanentemente %1$d elementos seleccionados (%2$s).</string>
     <string name="analysis_select_all">Seleccionar todo (%1$d)</string>
     <string name="analysis_clear_all">Limpiar selección</string>
     <string name="analysis_empty_folder">Carpeta vacía</string>
