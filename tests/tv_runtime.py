@@ -525,12 +525,19 @@ def multitrack_playback(tv, label, output):
     print(f"PASS {label} Matroska H264/AAC and embedded subtitle cue", flush=True)
 
 
-def image_viewing(tv, label, output):
+def image_viewing(tv, label, output, after_smb_idle=False):
     name = "vireo-image.png"
+    if after_smb_idle:
+        # Leave the connection idle longer than the old ten-second socket timeout.
+        time.sleep(12)
     tv.select(name)
     started = time.monotonic()
-    tv.find(lambda node: node.get("content-desc") == name, "decoded image", timeout=30)
-    print(f"{label} image observed after {time.monotonic() - started:.2f}s including automation", flush=True)
+    deadline = 8 if after_smb_idle else 30
+    tv.find(lambda node: node.get("content-desc") == name, "decoded image", timeout=deadline)
+    elapsed = time.monotonic() - started
+    if after_smb_idle and elapsed >= deadline:
+        raise AssertionError(f"Image after idle SMB connection took {elapsed:.2f}s")
+    print(f"{label} image observed after {elapsed:.2f}s including automation", flush=True)
     tv.select("Zoom +")
     tv.text("Pan")
     tv.select("Rotate")
@@ -573,7 +580,7 @@ def smb(tv, fixture, variant, user, password, output):
     media_playback(tv, f"{variant} SMB", output)
     video_playback(tv, f"{variant} SMB", output)
     multitrack_playback(tv, f"{variant} SMB", output)
-    image_viewing(tv, f"{variant} SMB", output)
+    image_viewing(tv, f"{variant} SMB", output, after_smb_idle=True)
 
 
 def initial_install(tv, hierarchy, release):
