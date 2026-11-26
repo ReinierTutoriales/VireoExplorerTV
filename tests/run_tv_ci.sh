@@ -30,6 +30,7 @@ stop_emulator() {
   fi
   timeout 10 adb devices -l > "$evidence/final-adb.txt" 2>&1 || true
   timeout 15 adb -s emulator-5554 logcat -b all -d > "$evidence/final-logcat.txt" 2>&1 || true
+  timeout 15 adb -s emulator-5554 logcat -d -s VireoSmbTiming:I || true
   timeout 10 adb -s emulator-5554 emu kill || true
   kill "$emu_pid" 2>/dev/null || true
   wait "$emu_pid" 2>/dev/null || true

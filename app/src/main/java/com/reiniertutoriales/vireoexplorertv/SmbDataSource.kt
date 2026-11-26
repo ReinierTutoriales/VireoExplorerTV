@@ -171,9 +171,13 @@ internal class SmbDataSource(
         val path = allowedPaths[dataSpec.uri] ?: throw IOException("SMB URI outside playback session")
         transferInitializing(dataSpec)
         try {
+            val opening = android.os.SystemClock.elapsedRealtime()
             val f = session.openReadOnlyFile(path)
+            val opened = android.os.SystemClock.elapsedRealtime()
             file = f
             val size = f.fileInformation.standardInformation.endOfFile
+            val metadata = android.os.SystemClock.elapsedRealtime()
+            android.util.Log.i("VireoSmbTiming", "open=${opened - opening}ms metadata=${metadata - opened}ms")
             offset = dataSpec.position
             if (offset > size) throw DataSourceException(PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE)
             remaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) size - offset else minOf(dataSpec.length, size - offset)
@@ -206,7 +210,9 @@ internal class SmbDataSource(
     override fun getUri(): Uri? = uri
 
     override fun close() {
+        val closing = android.os.SystemClock.elapsedRealtime()
         try { file?.close() } catch (_: Exception) {}
+        if (file != null) android.util.Log.i("VireoSmbTiming", "close=${android.os.SystemClock.elapsedRealtime() - closing}ms")
         file = null
         uri = null
         offset = 0L

@@ -167,13 +167,20 @@ private suspend fun decode(
         localFile != null -> localFile.inputStream()
         else -> checkNotNull(checkNotNull(resolver).openInputStream(entry.uri))
     }
+    val reading = android.os.SystemClock.elapsedRealtime()
     val bytes = stream.use { readBoundedImageBytes(it) { coroutineContext.ensureActive() } }
+    val read = android.os.SystemClock.elapsedRealtime()
     coroutineContext.ensureActive()
-    if (Build.VERSION.SDK_INT >= 28) {
+    val decoded = if (Build.VERSION.SDK_INT >= 28) {
         decodeSourceVisual(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes)), width, height)
     } else {
         DecodedVisual.Static(decodeSampledBytes(bytes, width, height))
     }
+    if (openStream != null) {
+        val finished = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i("VireoSmbTiming", "image read+close=${read - reading}ms decode=${finished - read}ms")
+    }
+    decoded
 }
 
 @Composable
