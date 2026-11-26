@@ -583,9 +583,34 @@ def smb(tv, fixture, variant, user, password, output):
     image_viewing(tv, f"{variant} SMB", output, after_smb_idle=True)
 
 
-def initial_install(tv, hierarchy, release):
+def install_hierarchy_fixture(tv, apk):
+    # Google Play verification can stall an ADB install on this disposable image.
+    # Scope the override to the read-only instrumentation APK and restore it
+    # before installing either application variant.
+    setting = "verifier_verify_adb_installs"
+    command = ("shell", "settings")
+    previous = tv.setup_command(*command, "get", "global", setting).strip()
     try:
-        tv.install(hierarchy)
+        tv.setup_command(*command, "put", "global", setting, "0")
+        if tv.setup_command(*command, "get", "global", setting).strip() != "0":
+            raise AssertionError("Could not isolate the hierarchy fixture verifier")
+        tv.install(apk)
+    finally:
+        if previous == "null":
+            tv.setup_command(*command, "delete", "global", setting)
+        else:
+            tv.setup_command(*command, "put", "global", setting, previous)
+        if tv.setup_command(*command, "get", "global", setting).strip() != previous:
+            raise AssertionError("Could not restore the original ADB verifier setting")
+    print("Hierarchy fixture installed and ADB verifier restored", flush=True)
+
+
+def initial_install(tv, hierarchy, release, isolate_verifier=False):
+    try:
+        if isolate_verifier:
+            install_hierarchy_fixture(tv, hierarchy)
+        else:
+            tv.install(hierarchy)
         tv.install(release)
     except subprocess.TimeoutExpired as error:
         # The device may still be committing the session. The CI launcher
@@ -610,7 +635,10 @@ if __name__ == "__main__":
     args.output.mkdir(parents=True, exist_ok=True)
     try:
         tv.configure_runtime()
-        initial_install(tv, args.hierarchy, args.release)
+        isolate_verifier = (os.environ.get("GITHUB_ACTIONS") == "true"
+                            and os.environ.get("TV_API") == "30"
+                            and tv.setup_command("shell", "getprop", "ro.build.version.sdk").strip() == "30")
+        initial_install(tv, args.hierarchy, args.release, isolate_verifier=isolate_verifier)
     except (Exception, SystemExit):
         trace = traceback.format_exc()
         (args.output / "setup-failure.txt").write_text(trace)

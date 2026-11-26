@@ -63,3 +63,35 @@ class SetupTests(unittest.TestCase):
         with patch.object(tv, "install", side_effect=error):
             with self.assertRaises(subprocess.CalledProcessError):
                 initial_install(tv, "hierarchy.apk", "release.apk")
+
+    def test_hierarchy_install_restores_verifier_before_release(self):
+        tv = Tv("emulator-5554")
+        events = []
+
+        def command(*args):
+            events.append(args)
+            return next(readbacks) if args[2] == "get" else ""
+
+        readbacks = iter(("1", "0", "1"))
+        with patch.object(tv, "setup_command", side_effect=command), patch.object(
+                tv, "install", side_effect=lambda apk: events.append(apk)):
+            initial_install(tv, "hierarchy.apk", "release.apk", isolate_verifier=True)
+        self.assertEqual(events, [
+            ("shell", "settings", "get", "global", "verifier_verify_adb_installs"),
+            ("shell", "settings", "put", "global", "verifier_verify_adb_installs", "0"),
+            ("shell", "settings", "get", "global", "verifier_verify_adb_installs"),
+            "hierarchy.apk",
+            ("shell", "settings", "put", "global", "verifier_verify_adb_installs", "1"),
+            ("shell", "settings", "get", "global", "verifier_verify_adb_installs"),
+            "release.apk",
+        ])
+
+    def test_hierarchy_timeout_restores_unset_verifier(self):
+        tv = Tv("emulator-5554")
+        with patch.object(tv, "setup_command", side_effect=["null", "", "0", "", "null"]) as command, patch.object(
+                tv, "install", side_effect=subprocess.TimeoutExpired("adb", 90)) as install:
+            with self.assertRaises(SystemExit) as result:
+                initial_install(tv, "hierarchy.apk", "release.apk", isolate_verifier=True)
+        self.assertEqual(result.exception.code, 75)
+        install.assert_called_once_with("hierarchy.apk")
+        command.assert_any_call("shell", "settings", "delete", "global", "verifier_verify_adb_installs")
