@@ -37,8 +37,6 @@ import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.share.DiskShare
 import kotlinx.coroutines.*
-import java.io.FilterInputStream
-import java.io.InputStream
 import java.util.EnumSet
 import java.util.Locale
 
@@ -170,15 +168,6 @@ private suspend fun deleteSmbEntry(session: SmbShareSession, folder: List<String
         share.rmdir(target, false)
     } else {
         share.rm(target)
-    }
-}
-
-private fun openSmbInputStream(session: SmbShareSession, remotePath: String): InputStream {
-    val file = session.openReadOnlyFile(remotePath)
-    return object : FilterInputStream(file.inputStream) {
-        override fun close() {
-            try { super.close() } finally { runCatching { file.close() } }
-        }
     }
 }
 
@@ -335,13 +324,19 @@ internal fun SmbBrowser(onClose: () -> Unit) {
         val allowedImageMap = remember(imageSiblings) { imageSiblings.associate { it.first.uri to it.second } }
         val targetUri = remoteUri(server.host, server.share, imageTarget.first)
         val targetEntry = Entry(targetUri, imageTarget.second.name, mediaMime(imageTarget.second.name), imageTarget.second.bytes, 0)
+        val imagePaths = remember(allowedImageMap, targetUri, imageTarget.first) {
+            allowedImageMap + (targetUri to imageTarget.first)
+        }
         ImageViewer(
             entry = targetEntry,
             resolver = null,
             siblings = imageSiblings.map { it.first },
             openStream = { item ->
-                val remotePath = allowedImageMap[item.uri] ?: imageTarget.first
-                openSmbInputStream(activeSession, remotePath)
+                // Use the same length-bounded reads as video, without SMBJ's read-ahead past EOF.
+                androidx.media3.datasource.DataSourceInputStream(
+                    SmbDataSource(activeSession, imagePaths),
+                    androidx.media3.datasource.DataSpec(item.uri)
+                )
             },
             onClose = { returnName = imageTarget.second.name; imageViewing = null }
         )
