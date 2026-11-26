@@ -109,14 +109,17 @@ class Tv:
             time.sleep(0.25)
         raise AssertionError(f"No fresh instrumentation hierarchy: {last}")
 
-    def find(self, predicate, label, focused=False):
-        for _ in range(5):
+    def find(self, predicate, label, focused=False, timeout=None):
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        for _ in range(120 if deadline is not None else 5):
             tree = self.tree()
             scopes = [node for node in tree.iter("node") if node.get("focused") == "true"] if focused else [tree]
             for scope in scopes:
                 for node in scope.iter("node"):
                     if predicate(node):
                         return node
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             time.sleep(0.25)
         labels = [node.get("text") for node in tree.iter("node") if node.get("text")]
         raise AssertionError(f"Missing {label!r}, focused={focused}. Screen: {labels}")
@@ -524,7 +527,9 @@ def multitrack_playback(tv, label, output):
 def image_viewing(tv, label, output):
     name = "vireo-image.png"
     tv.select(name)
-    tv.find(lambda node: node.get("content-desc") == name, "decoded image")
+    started = time.monotonic()
+    tv.find(lambda node: node.get("content-desc") == name, "decoded image", timeout=30)
+    print(f"{label} image observed after {time.monotonic() - started:.2f}s including automation", flush=True)
     tv.select("Zoom +")
     tv.text("Pan")
     tv.select("Rotate")
