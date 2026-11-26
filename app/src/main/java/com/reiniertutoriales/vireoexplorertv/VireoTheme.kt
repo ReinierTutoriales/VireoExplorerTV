@@ -12,6 +12,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
@@ -64,7 +67,11 @@ internal fun VireoProgressBar(progress: Float, modifier: Modifier = Modifier) {
     val clamped = progress.coerceIn(0f, 1f)
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     val activeColor = MaterialTheme.colorScheme.primary
-    Canvas(modifier.fillMaxWidth().height(8.dp)) {
+    Canvas(
+        modifier.fillMaxWidth().height(8.dp).semantics {
+            progressBarRangeInfo = ProgressBarRangeInfo(clamped, 0f..1f)
+        }
+    ) {
         val radius = CornerRadius(size.height / 2f, size.height / 2f)
         drawRoundRect(color = trackColor, cornerRadius = radius)
         if (clamped > 0f) {

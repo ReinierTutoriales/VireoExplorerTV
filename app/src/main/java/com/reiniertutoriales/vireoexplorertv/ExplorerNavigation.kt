@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
@@ -38,7 +40,7 @@ internal fun ExplorerNavigation(
     ModalNavigationDrawer(
         drawerState = rememberDrawerState(DrawerValue.Closed),
         scrimBrush = SolidColor(colors.background.copy(alpha = 0.64f)),
-        drawerContent = {
+        drawerContent = { drawerValue ->
             Column(
                 modifier = Modifier.fillMaxHeight()
                     .background(colors.background)
@@ -48,7 +50,11 @@ internal fun ExplorerNavigation(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 ExplorerPage.entries.forEach { destination ->
+                    val label = stringResource(destination.label)
                     NavigationDrawerItem(
+                        modifier = if (drawerValue == DrawerValue.Closed) {
+                            Modifier.semantics { contentDescription = label }
+                        } else Modifier,
                         selected = page == destination,
                         enabled = enabled,
                         onClick = { onNavigate(destination) },
@@ -57,7 +63,7 @@ internal fun ExplorerNavigation(
                         colors = itemColors,
                         scale = NavigationDrawerItemDefaults.scale(focusedScale = 1f, focusedSelectedScale = 1f)
                     ) {
-                        Text(stringResource(destination.label), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
