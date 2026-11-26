@@ -73,7 +73,6 @@ internal fun ExplorerHome(
     val initialFocus = remember { FocusRequester() }
     LaunchedEffect(page) { initialFocus.requestFocus() }
     val colors = MaterialTheme.colorScheme
-    val listState = key(page) { rememberLazyListState() }
 
     ExplorerNavigation(page = page, onNavigate = onPage) {
         Column(
@@ -86,85 +85,91 @@ internal fun ExplorerHome(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                if (page != ExplorerPage.HOME) {
+                    IconButton(onClick = onSearch, modifier = Modifier.focusRequester(initialFocus)) {
+                        ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
+                    }
+                }
                 Text(
                     stringResource(page.label),
                     Modifier.weight(1f),
                     color = colors.onSurface,
                     style = MaterialTheme.typography.headlineMedium
                 )
-                IconButton(
-                    onClick = onSearch,
-                    modifier = if (page == ExplorerPage.HOME) Modifier else Modifier.focusRequester(initialFocus)
-                ) {
-                    ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
+                if (page == ExplorerPage.HOME) {
+                    IconButton(onClick = onSearch) {
+                        ExplorerIcon(R.drawable.symbol_search, description = stringResource(R.string.explorer_search))
+                    }
                 }
             }
-            LazyColumn(
-                Modifier.weight(1f),
-                state = listState,
-                contentPadding = PaddingValues(start = 6.dp, top = 6.dp, end = 8.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                if (page == ExplorerPage.HOME) {
-                    item { Text(stringResource(R.string.explorer_storage), style = MaterialTheme.typography.titleLarge) }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            ExplorerTile(
-                                label = R.string.explorer_internal,
-                                subtitle = R.string.explorer_internal_subtitle,
-                                icon = R.drawable.symbol_hard_drive,
-                                modifier = Modifier.weight(1f).focusRequester(initialFocus),
-                                onClick = onInternal
-                            )
-                            ExplorerTile(
-                                label = R.string.explorer_usb,
-                                subtitle = R.string.explorer_usb_subtitle,
-                                icon = R.drawable.symbol_usb,
-                                modifier = Modifier.weight(1f),
-                                onClick = onUsb
-                            )
-                        }
-                    }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            ExplorerTile(
-                                label = R.string.explorer_local_network,
-                                subtitle = R.string.explorer_local_network_subtitle,
-                                icon = R.drawable.symbol_lan,
-                                modifier = Modifier.weight(1f),
-                                onClick = { onPage(ExplorerPage.NETWORK) }
-                            )
-                            ExplorerTile(
-                                label = R.string.explorer_folders,
-                                subtitle = R.string.explorer_folders_subtitle,
-                                icon = R.drawable.symbol_folder,
-                                modifier = Modifier.weight(1f),
-                                onClick = onFolders
-                            )
-                        }
-                    }
-                    if (notice != null) item { Text(notice, color = colors.primary) }
-                    item { Text(stringResource(R.string.explorer_categories), style = MaterialTheme.typography.titleLarge) }
-                    FileCategory.entries.chunked(3).forEach { row ->
+            key(page) {
+                LazyColumn(
+                    Modifier.weight(1f),
+                    state = rememberLazyListState(),
+                    contentPadding = PaddingValues(start = 6.dp, top = 6.dp, end = 8.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    if (page == ExplorerPage.HOME) {
+                        item { Text(stringResource(R.string.explorer_storage), style = MaterialTheme.typography.titleLarge) }
                         item {
                             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                row.forEach { category ->
-                                    ExplorerTile(
-                                        label = category.label,
-                                        subtitle = null,
-                                        icon = category.icon,
-                                        modifier = Modifier.weight(1f),
-                                        compact = true
-                                    ) {
-                                        onCategory(category)
+                                ExplorerTile(
+                                    label = R.string.explorer_internal,
+                                    subtitle = R.string.explorer_internal_subtitle,
+                                    icon = R.drawable.symbol_hard_drive,
+                                    modifier = Modifier.weight(1f).focusRequester(initialFocus),
+                                    onClick = onInternal
+                                )
+                                ExplorerTile(
+                                    label = R.string.explorer_usb,
+                                    subtitle = R.string.explorer_usb_subtitle,
+                                    icon = R.drawable.symbol_usb,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = onUsb
+                                )
+                            }
+                        }
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                ExplorerTile(
+                                    label = R.string.explorer_local_network,
+                                    subtitle = R.string.explorer_local_network_subtitle,
+                                    icon = R.drawable.symbol_lan,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { onPage(ExplorerPage.NETWORK) }
+                                )
+                                ExplorerTile(
+                                    label = R.string.explorer_folders,
+                                    subtitle = R.string.explorer_folders_subtitle,
+                                    icon = R.drawable.symbol_folder,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = onFolders
+                                )
+                            }
+                        }
+                        if (notice != null) item { Text(notice, color = colors.primary) }
+                        item { Text(stringResource(R.string.explorer_categories), style = MaterialTheme.typography.titleLarge) }
+                        FileCategory.entries.chunked(3).forEach { row ->
+                            item {
+                                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    row.forEach { category ->
+                                        ExplorerTile(
+                                            label = category.label,
+                                            subtitle = null,
+                                            icon = category.icon,
+                                            modifier = Modifier.weight(1f),
+                                            compact = true
+                                        ) {
+                                            onCategory(category)
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else {
+                        if (notice != null) item { Text(notice, color = colors.primary) }
+                        content()
                     }
-                } else {
-                    if (notice != null) item { Text(notice, color = colors.primary) }
-                    content()
                 }
             }
         }
