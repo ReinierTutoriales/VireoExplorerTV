@@ -8,13 +8,11 @@ import android.provider.DocumentsContract
 import android.util.LruCache
 import android.util.Size
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -47,7 +45,7 @@ internal fun trimThumbnailCache(level: Int) {
 internal fun FileThumbnail(
     entry: Entry,
     revision: Int,
-    modifier: Modifier = Modifier.size(80.dp, 48.dp),
+    modifier: Modifier = Modifier,
     preview: Boolean = false
 ) {
     if (Build.VERSION.SDK_INT < 29 || entry.directory ||

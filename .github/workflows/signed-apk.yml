@@ -85,12 +85,12 @@ jobs:
           version="$(sed -n "s/.*versionName='\([0-9][0-9.]*\)'.*/\1/p" <<< "$package")"
           [[ -n "$version" ]]
           mkdir signed
-          filename="VireoExplorerTV-${version}-${GITHUB_SHA:0:7}.apk"
+          filename="VireoExplorerTV-${version}.apk"
           "$tools_dir/apksigner" sign --ks "$temp_dir/release.p12" --ks-type PKCS12 \
             --ks-key-alias "$alias" --ks-pass env:VIREO_KEY_PASSWORD --key-pass env:VIREO_KEY_PASSWORD \
             --out "signed/$filename" "$input"
           verified="$("$tools_dir/apksigner" verify --print-certs "signed/$filename")"
-          actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$verified")"
+          actual="$(sed -n 's/^.*certificate SHA-256 digest: //p' <<< "$verified" | head -n 1)"
           [[ "$actual" == "$expected" ]]
           unset VIREO_KEY_PASSWORD
           (

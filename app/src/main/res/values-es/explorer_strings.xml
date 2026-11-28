@@ -145,6 +145,7 @@
     <string name="explorer_viewer_unavailable">No hay un visor compatible instalado.</string>
     <plurals name="explorer_search_unreadable">
         <item quantity="one">No se pudo leer %d carpeta.</item>
+        <item quantity="many">No se pudieron leer %d carpetas.</item>
         <item quantity="other">No se pudieron leer %d carpetas.</item>
     </plurals>
     <string name="explorer_apk_settings_unavailable">Los ajustes para instalar aplicaciones desconocidas no están disponibles en este TV.</string>
